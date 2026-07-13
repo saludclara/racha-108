@@ -5,29 +5,29 @@ import { useApp } from "@/lib/store";
 
 const LAYERS = [
   {
-    w: "35%",
+    w: "40%",
     title: "Probabilidad futbolística",
-    body: "Poisson / Dixon-Coles simplificado: goles esperados, forma, ventaja local.",
+    body: "Dixon–Coles + Poisson: goles esperados, forma ponderada, ventaja local.",
   },
   {
-    w: "25%",
+    w: "28%",
     title: "Estudio y estadísticas",
-    body: "xG, disparos, posesión, descanso, lesiones y motivación de partido.",
+    body: "xG, descanso, lesiones, motivación y fit del mercado.",
   },
   {
-    w: "20%",
+    w: "22%",
     title: "Matemática de valor",
-    body: "Edge vs cuota implícita. Kelly fraccional solo como filtro, no para sizing.",
+    body: "Edge vs implícita y Kelly fraccional solo como filtro.",
   },
   {
-    w: "10%",
-    title: "Numerología del día",
-    body: "Capa simbólica: afinidad con 11.11 / 108. Nunca domina el pick.",
+    w: "5%",
+    title: "Numerología",
+    body: "Capa simbólica suave (11.11 / 108).",
   },
   {
-    w: "10%",
-    title: "Estrellas / atmósfera",
-    body: "Fase lunar y signo del día como modificador lúdico (±pequeño).",
+    w: "5%",
+    title: "Estrellas",
+    body: "Modificador lúdico de atmósfera.",
   },
 ];
 
@@ -36,62 +36,44 @@ export default function MotorPage() {
   if (!ready) return null;
 
   return (
-    <div className="rise space-y-6">
-      <header>
-        <p className="font-[family-name:var(--font-mono)] text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
-          Lab
-        </p>
-        <h1 className="mt-1 text-3xl font-semibold">Motor</h1>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          Solo mercados grind (cuotas ~1.05–1.25). Si nada supera el umbral → SKIP.
+    <div className="rise space-y-5">
+      <header className="pt-3">
+        <p className="section-label !normal-case !tracking-normal">Lab</p>
+        <h1 className="large-title">Motor</h1>
+        <p className="mt-1 text-[15px] text-[var(--muted)]">
+          Solo mercados grind con confianza ≥ 86%. Un pick automático por hora.
         </p>
       </header>
 
-      <div className="glass rounded-3xl p-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-              Umbral activo
-            </p>
-            <p className="text-3xl font-semibold text-[var(--accent)]">
-              {threshold}
-            </p>
-          </div>
-          <div className="text-right text-sm">
-            <p className="text-[var(--muted)]">Base settings</p>
-            <p>{state.settings.scoreThreshold}</p>
-          </div>
-        </div>
+      <div className="ios-card p-5">
+        <p className="text-[13px] text-[var(--muted)]">Umbral activo</p>
+        <p className="text-[34px] font-bold tracking-tight" style={{ color: "var(--ios-blue)" }}>
+          {threshold}
+        </p>
         {tiltActive ? (
-          <p className="mt-4 text-sm text-[var(--warn)]">
-            Tilt guard ON tras una loss: umbral +6 durante {TILT_GUARD_HOURS}h.
-            Vault intacto. HotStack reiniciado a 11.11.
+          <p className="mt-2 text-[14px]" style={{ color: "var(--warn)" }}>
+            Tilt guard ON · +6 por {TILT_GUARD_HOURS}h tras una loss.
           </p>
         ) : (
-          <p className="mt-4 text-sm text-[var(--muted)]">
-            Sin tilt guard. El motor opera en umbral base.
+          <p className="mt-2 text-[14px] text-[var(--muted)]">
+            Base {state.settings.scoreThreshold} · sin tilt guard.
           </p>
         )}
       </div>
 
-      <section className="space-y-3">
+      <div className="space-y-3">
         {LAYERS.map((l) => (
-          <article key={l.title} className="glass rounded-2xl p-4">
+          <article key={l.title} className="ios-card p-4">
             <div className="flex items-baseline justify-between gap-3">
-              <h2 className="font-semibold">{l.title}</h2>
-              <span className="font-[family-name:var(--font-mono)] text-xs text-[var(--accent)]">
+              <h2 className="font-semibold tracking-tight">{l.title}</h2>
+              <span className="text-[13px] font-semibold" style={{ color: "var(--ios-blue)" }}>
                 {l.w}
               </span>
             </div>
-            <p className="mt-2 text-sm text-[var(--muted)]">{l.body}</p>
+            <p className="mt-1 text-[14px] text-[var(--muted)]">{l.body}</p>
           </article>
         ))}
-      </section>
-
-      <p className="text-xs text-[var(--muted)]">
-        Numerología y estrellas son flavor transparente: el gate real es
-        probabilidad + stats + valor.
-      </p>
+      </div>
     </div>
   );
 }

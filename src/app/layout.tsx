@@ -1,29 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { Fraunces, IBM_Plex_Mono } from "next/font/google";
 import { AppProvider } from "@/lib/store";
 import { AppShell } from "@/components/AppShell";
 import "./globals.css";
 
-const display = Fraunces({
-  variable: "--font-display",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const mono = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
-
 export const metadata: Metadata = {
   title: "Racha 108",
   description:
-    "Apuestas ficticias de bajo riesgo · 11.11 AUD/hora · objetivo 108 seguidos",
+    "Apuestas ficticias automáticas · 11.11 AUD/hora · objetivo 108",
   applicationName: "Racha 108",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "Racha 108",
   },
   icons: {
@@ -37,7 +24,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0c1412",
+  themeColor: "#f2f2f7",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -50,7 +37,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${display.variable} ${mono.variable} h-full`}>
+    <html lang="es" className="h-full">
       <body className="min-h-full antialiased">
         <AppProvider>
           <AppShell>{children}</AppShell>

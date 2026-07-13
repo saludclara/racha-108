@@ -17,51 +17,51 @@ export default function HomePage() {
   }
 
   const progress = Math.min(100, (state.streak / STREAK_GOAL) * 100);
+  const last = state.history[0];
 
   return (
-    <div className="rise flex min-h-[calc(100dvh-7rem)] flex-col justify-between gap-8">
-      <header className="space-y-3 pt-2">
-        <p className="font-[family-name:var(--font-mono)] text-xs uppercase tracking-[0.28em] text-[var(--muted)]">
-          simulación · aud · 11.11
+    <div className="rise space-y-5 pb-4">
+      <header className="pt-3">
+        <p className="section-label !normal-case !tracking-normal">
+          Automático · 11.11 AUD · 1/hora
         </p>
-        <h1 className="text-5xl font-semibold leading-none tracking-tight md:text-6xl">
-          Racha{" "}
-          <span className="text-[var(--accent)]">108</span>
+        <h1 className="large-title">
+          Racha <span style={{ color: "var(--ios-blue)" }}>108</span>
         </h1>
-        <p className="max-w-md text-base text-[var(--muted)] md:text-lg">
-          Una apuesta ficticia por hora. Bajo riesgo. Compound en HotStack,
-          cash seguro en Vault.
-        </p>
       </header>
 
-      <section className="glass rounded-3xl p-5 md:p-7">
-        <p className="mb-2 text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
-          Próxima hora
-        </p>
+      <section className="ios-card p-5">
+        <div className="flex items-center justify-between">
+          <p className="text-[13px] text-[var(--muted)]">Próximo pick</p>
+          <span className="pill pill-auto">Auto</span>
+        </div>
         <Countdown />
-        <div className="mt-6 grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-              HotStack
-            </p>
-            <p className="mt-1 text-2xl font-semibold">
+        <p className="mt-2 text-[13px] text-[var(--muted)]">
+          El motor apuesta solo, una vez por hora.
+        </p>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-[var(--ios-fill-2)] p-3">
+            <p className="text-[12px] text-[var(--muted)]">HotStack</p>
+            <p className="mt-0.5 text-[22px] font-semibold tracking-tight">
               <Money amount={state.hotStack} />
             </p>
           </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--vault)]">
-              Vault
-            </p>
-            <p className="mt-1 text-2xl font-semibold text-[var(--vault)] vault-anim">
+          <div className="rounded-xl bg-[var(--ios-fill-2)] p-3">
+            <p className="text-[12px] text-[var(--muted)]">Vault</p>
+            <p
+              className="mt-0.5 text-[22px] font-semibold tracking-tight vault-anim"
+              style={{ color: "var(--vault)" }}
+            >
               <Money amount={state.vault} />
             </p>
           </div>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-5">
           <div className="mb-2 flex items-baseline justify-between">
-            <p className="text-sm text-[var(--muted)]">Racha</p>
-            <p className="text-xl font-semibold">
+            <p className="text-[13px] text-[var(--muted)]">Racha</p>
+            <p className="text-[20px] font-semibold tracking-tight">
               {state.streak}
               <span className="text-[var(--muted)]">/{STREAK_GOAL}</span>
             </p>
@@ -70,26 +70,38 @@ export default function HomePage() {
             <span style={{ width: `${progress}%` }} />
           </div>
           {tiltActive && (
-            <p className="mt-3 text-sm text-[var(--warn)]">
-              Tilt guard activo — umbral {threshold}
-            </p>
-          )}
-          {state.goalReached && (
-            <p className="mt-3 text-sm text-[var(--accent)]">
-              Objetivo 108 alcanzado. El Vault queda como premio seguro.
+            <p className="mt-3 text-[13px]" style={{ color: "var(--warn)" }}>
+              Tilt guard · umbral {threshold}
             </p>
           )}
         </div>
       </section>
 
-      <div className="flex flex-col gap-3 pb-2 sm:flex-row">
-        <Link href="/pick" className="btn btn-primary flex-1 pulse-once">
-          Ver pick de la hora
-        </Link>
-        <Link href="/vault" className="btn btn-ghost flex-1">
-          Abrir Vault
-        </Link>
-      </div>
+      {last && (
+        <section className="ios-card p-4">
+          <p className="text-[13px] text-[var(--muted)]">Última hora</p>
+          <div className="mt-2 flex items-center gap-2">
+            <span
+              className={`pill ${
+                last.outcome === "win"
+                  ? "pill-win"
+                  : last.outcome === "loss"
+                    ? "pill-loss"
+                    : "pill-skip"
+              }`}
+            >
+              {last.outcome.toUpperCase()}
+            </span>
+            <p className="text-[15px] font-medium leading-snug">
+              {last.matchLabel ?? last.note}
+            </p>
+          </div>
+        </section>
+      )}
+
+      <Link href="/pick" className="btn btn-primary w-full">
+        Ver pick de la hora
+      </Link>
     </div>
   );
 }

@@ -1,137 +1,121 @@
 "use client";
 
-import { useState } from "react";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { Money } from "@/components/Countdown";
 import { useApp } from "@/lib/store";
 
 export default function PickPage() {
-  const {
-    state,
-    ready,
-    threshold,
-    placeAndResolve,
-    skipHour,
-    forceNewHour,
-  } = useApp();
-  const [pulse, setPulse] = useState(false);
+  const { state, ready, threshold, runNextHour } = useApp();
 
   if (!ready) return null;
 
   const pick = state.currentPick;
-  const resolved =
-    state.pickStatus === "resolved" || state.pickStatus === "skipped";
   const last = state.history[0];
-
-  const onConfirm = () => {
-    setPulse(true);
-    placeAndResolve();
-    setTimeout(() => setPulse(false), 900);
-  };
+  const showPick =
+    pick &&
+    (state.pickStatus === "resolved" ||
+      state.pickStatus === "ready" ||
+      state.pickStatus === "placed");
 
   return (
-    <div className="rise space-y-6">
-      <header>
-        <p className="font-[family-name:var(--font-mono)] text-xs uppercase tracking-[0.24em] text-[var(--muted)]">
-          Pick · umbral {threshold}
+    <div className="rise space-y-5">
+      <header className="pt-3">
+        <div className="flex items-center gap-2">
+          <p className="section-label !mb-0 !normal-case !tracking-normal">
+            Pick automático
+          </p>
+          <span className="pill pill-auto">1 / hora</span>
+        </div>
+        <h1 className="large-title mt-1">Apuesta de la hora</h1>
+        <p className="mt-1 text-[15px] text-[var(--muted)]">
+          Seleccionada y liquidada sola · umbral {threshold}
         </p>
-        <h1 className="mt-1 text-3xl font-semibold">Apuesta de la hora</h1>
       </header>
 
       {state.pickStatus === "skipped" && (
-        <div className="glass rounded-2xl p-5 text-[var(--warn)]">
-          <p className="font-semibold">SKIP</p>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            {last?.note ?? "Sin pick válido esta hora."}
+        <div className="ios-card p-5">
+          <span className="pill pill-skip">SKIP</span>
+          <p className="mt-3 text-[15px] text-[var(--muted)]">
+            {last?.note ?? "Sin pick con confianza suficiente."}
           </p>
-          <button type="button" className="btn btn-ghost mt-4" onClick={forceNewHour}>
-            Simular siguiente hora
+          <button type="button" className="btn btn-ghost mt-4 w-full" onClick={runNextHour}>
+            Probar siguiente hora
           </button>
         </div>
       )}
 
-      {pick && state.pickStatus !== "skipped" && (
-        <article className={`glass rounded-3xl p-5 md:p-6 ${pulse ? "pulse-once" : ""}`}>
-          <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
-            {pick.match.league} · jornada {pick.match.matchday}
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold leading-tight">
-            {pick.match.home.name}{" "}
-            <span className="text-[var(--muted)]">vs</span>{" "}
-            {pick.match.away.name}
-          </h2>
-          <p className="mt-3 text-lg text-[var(--accent)]">{pick.marketLabel}</p>
-
-          <div className="mt-5 grid grid-cols-3 gap-3 text-sm">
-            <div>
-              <p className="text-[var(--muted)]">Cuota</p>
-              <p className="text-xl font-semibold">{pick.odds.toFixed(2)}</p>
-            </div>
-            <div>
-              <p className="text-[var(--muted)]">Stake</p>
-              <p className="text-xl font-semibold">
-                <Money amount={state.hotStack} />
-              </p>
-            </div>
-            <div>
-              <p className="text-[var(--muted)]">p modelo</p>
-              <p className="text-xl font-semibold">
-                {(pick.modelProb * 100).toFixed(1)}%
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 border-t border-[var(--line)] pt-5">
-            <ScoreBreakdown total={pick.totalScore} layers={pick.layers} />
-          </div>
-
-          {!resolved && (
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-              <button
-                type="button"
-                className="btn btn-primary flex-1"
-                onClick={onConfirm}
-                disabled={state.goalReached}
-              >
-                Confirmar apuesta ficticia
-              </button>
-              <button type="button" className="btn btn-ghost flex-1" onClick={skipHour}>
-                Skip manual
-              </button>
-            </div>
-          )}
-
-          {state.pickStatus === "resolved" && last && (
-            <div className="mt-6 rounded-2xl border border-[var(--line)] p-4">
-              <p
-                className={`text-lg font-semibold ${
-                  last.outcome === "win"
-                    ? "text-[var(--accent)]"
-                    : "text-[var(--danger)]"
+      {showPick && pick && (
+        <article className="ios-card p-5">
+          {last && state.pickStatus === "resolved" && (
+            <div className="mb-4">
+              <span
+                className={`pill ${
+                  last.outcome === "win" ? "pill-win" : "pill-loss"
                 }`}
               >
-                {last.outcome === "win" ? "GANADA" : "PERDIDA"}
-              </p>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                {last.outcome === "win"
-                  ? `Profit ${last.profit?.toFixed(2)} · Vault +${last.vaultAdded?.toFixed(2)}`
-                  : last.note}
-              </p>
-              <button
-                type="button"
-                className="btn btn-ghost mt-4 w-full"
-                onClick={forceNewHour}
-              >
-                Simular siguiente hora
-              </button>
+                {last.outcome === "win" ? "Ganada automáticamente" : "Perdida"}
+              </span>
             </div>
           )}
+
+          <p className="text-[13px] text-[var(--muted)]">
+            {pick.match.league} · jornada {pick.match.matchday}
+          </p>
+          <h2 className="mt-1 text-[22px] font-semibold tracking-tight leading-snug">
+            {pick.match.home.name}{" "}
+            <span className="text-[var(--muted)] font-normal">vs</span>{" "}
+            {pick.match.away.name}
+          </h2>
+          <p className="mt-2 text-[17px] font-semibold" style={{ color: "var(--ios-blue)" }}>
+            {pick.marketLabel}
+          </p>
+
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            {[
+              ["Cuota", pick.odds.toFixed(2)],
+              [
+                "Stake",
+                last?.stake != null
+                  ? new Intl.NumberFormat("en-AU", {
+                      style: "currency",
+                      currency: "AUD",
+                    }).format(last.stake)
+                  : "—",
+              ],
+              ["Confianza", `${(pick.modelProb * 100).toFixed(1)}%`],
+            ].map(([k, v]) => (
+              <div key={k} className="rounded-xl bg-[var(--ios-fill-2)] p-3">
+                <p className="text-[11px] text-[var(--muted)]">{k}</p>
+                <p className="mt-0.5 text-[16px] font-semibold tracking-tight">{v}</p>
+              </div>
+            ))}
+          </div>
+
+          {last?.outcome === "win" && (
+            <p className="mt-3 text-[14px] text-[var(--muted)]">
+              Profit{" "}
+              <Money amount={last.profit ?? 0} /> · Vault +
+              <Money amount={last.vaultAdded ?? 0} />
+            </p>
+          )}
+          {last?.outcome === "loss" && last.note && (
+            <p className="mt-3 text-[14px]" style={{ color: "var(--danger)" }}>
+              {last.note}
+            </p>
+          )}
+
+          <div className="mt-5 border-t border-[var(--line)] pt-4">
+            <ScoreBreakdown total={pick.totalScore} layers={pick.layers} />
+          </div>
         </article>
       )}
 
-      {!pick && state.pickStatus !== "skipped" && (
-        <p className="text-[var(--muted)]">Preparando pick…</p>
-      )}
+      <button type="button" className="btn btn-ghost w-full" onClick={runNextHour}>
+        Simular siguiente hora
+      </button>
+      <p className="text-center text-[12px] text-[var(--muted)]">
+        En producción el pick corre solo al cambiar la hora.
+      </p>
     </div>
   );
 }

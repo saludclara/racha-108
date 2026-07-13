@@ -1,29 +1,42 @@
 @import "tailwindcss";
 
 :root {
-  --bg0: #0c1412;
-  --bg1: #12201c;
-  --bg2: #1a2e28;
-  --ink: #e8f2ec;
-  --muted: #8fa89c;
-  --accent: #3dd6a5;
-  --accent-dim: #1f8f6e;
-  --warn: #e8b86d;
-  --danger: #e07a6a;
-  --vault: #6ec8e8;
-  --line: rgba(232, 242, 236, 0.1);
-  --glow: rgba(61, 214, 165, 0.25);
+  --ios-bg: #f2f2f7;
+  --ios-grouped: #ffffff;
+  --ios-grouped-2: #f2f2f7;
+  --ios-label: #000000;
+  --ios-secondary: rgba(60, 60, 67, 0.6);
+  --ios-tertiary: rgba(60, 60, 67, 0.3);
+  --ios-separator: rgba(60, 60, 67, 0.12);
+  --ios-blue: #007aff;
+  --ios-green: #34c759;
+  --ios-orange: #ff9500;
+  --ios-red: #ff3b30;
+  --ios-teal: #5ac8fa;
+  --ios-fill: rgba(120, 120, 128, 0.12);
+  --ios-fill-2: rgba(120, 120, 128, 0.08);
+
+  --bg0: var(--ios-bg);
+  --ink: var(--ios-label);
+  --muted: var(--ios-secondary);
+  --accent: var(--ios-blue);
+  --accent-dim: #0066d6;
+  --warn: var(--ios-orange);
+  --danger: var(--ios-red);
+  --vault: #5856d6;
+  --line: var(--ios-separator);
+  --card: var(--ios-grouped);
 }
 
 @theme inline {
   --color-background: var(--bg0);
   --color-foreground: var(--ink);
-  --font-sans: var(--font-display);
-  --font-mono: var(--font-mono);
+  --font-sans: var(--font-ios);
 }
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -34,17 +47,24 @@ body {
 body {
   margin: 0;
   color: var(--ink);
-  font-family: var(--font-display), Georgia, serif;
-  background:
-    radial-gradient(1200px 700px at 10% -10%, rgba(61, 214, 165, 0.14), transparent 55%),
-    radial-gradient(900px 600px at 110% 10%, rgba(110, 200, 232, 0.1), transparent 50%),
-    linear-gradient(165deg, var(--bg0), var(--bg1) 45%, #0a1210);
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "SF Pro Display",
+    "Helvetica Neue",
+    Helvetica,
+    Arial,
+    sans-serif;
+  background: var(--ios-bg);
   min-height: 100dvh;
-  -webkit-tap-highlight-color: transparent;
+  font-size: 17px;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
 }
 
 ::selection {
-  background: rgba(61, 214, 165, 0.35);
+  background: rgba(0, 122, 255, 0.2);
 }
 
 a {
@@ -53,72 +73,82 @@ a {
 }
 
 .safe-pad {
-  padding-top: max(12px, env(safe-area-inset-top));
-  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
   padding-left: max(16px, env(safe-area-inset-left));
   padding-right: max(16px, env(safe-area-inset-right));
 }
 
-.glass {
-  background: rgba(18, 32, 28, 0.72);
-  border: 1px solid var(--line);
-  backdrop-filter: blur(12px);
+.glass,
+.ios-card {
+  background: var(--card);
+  border-radius: 16px;
+  border: none;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.ios-inset {
+  background: var(--card);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
-  padding: 0.85rem 1.25rem;
-  border-radius: 999px;
-  border: 1px solid transparent;
+  min-height: 50px;
+  padding: 0.75rem 1.25rem;
+  border-radius: 14px;
+  border: none;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  transition: opacity 160ms ease, transform 120ms ease;
   cursor: pointer;
   font-family: inherit;
 }
 
 .btn:active {
-  transform: scale(0.98);
+  opacity: 0.72;
+  transform: scale(0.985);
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
-  color: #04140f;
-  box-shadow: 0 0 0 1px rgba(61, 214, 165, 0.3), 0 10px 30px var(--glow);
+  background: var(--ios-blue);
+  color: #fff;
 }
 
 .btn-primary:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
-  box-shadow: none;
 }
 
 .btn-ghost {
-  background: transparent;
-  border-color: var(--line);
-  color: var(--ink);
+  background: var(--ios-fill);
+  color: var(--ios-blue);
 }
 
 .pulse-once {
-  animation: pulseGlow 900ms ease;
+  animation: iosPulse 700ms ease;
 }
 
-@keyframes pulseGlow {
+@keyframes iosPulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(61, 214, 165, 0.5);
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.02);
   }
   100% {
-    box-shadow: 0 0 0 18px rgba(61, 214, 165, 0);
+    transform: scale(1);
   }
 }
 
 @keyframes riseIn {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -127,27 +157,24 @@ a {
 }
 
 .rise {
-  animation: riseIn 480ms ease both;
-}
-
-@keyframes vaultDrop {
-  0% {
-    transform: translateY(-8px);
-    opacity: 0;
-  }
-  100% {
-    transform: translateY(0);
-    opacity: 1;
-  }
+  animation: riseIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .vault-anim {
-  animation: vaultDrop 500ms ease both;
+  animation: riseIn 500ms ease both;
 }
 
 .countdown {
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.ios-tabbar {
+  background: rgba(249, 249, 249, 0.86);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: 0.5px solid var(--ios-separator);
 }
 
 .nav-link {
@@ -155,30 +182,81 @@ a {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  min-width: 56px;
+  min-width: 48px;
   min-height: 44px;
   justify-content: center;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-family: var(--font-mono), ui-monospace, monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: var(--ios-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .nav-link[data-active="true"] {
-  color: var(--accent);
+  color: var(--ios-blue);
+}
+
+.nav-icon {
+  font-size: 20px;
+  line-height: 1;
 }
 
 .score-bar {
   height: 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--ios-fill);
   overflow: hidden;
 }
 
 .score-bar > span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  background: var(--ios-blue);
   border-radius: inherit;
+}
+
+.large-title {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ios-secondary);
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  padding: 0 4px 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--ios-fill);
+}
+
+.pill-win {
+  color: var(--ios-green);
+  background: rgba(52, 199, 89, 0.14);
+}
+
+.pill-loss {
+  color: var(--ios-red);
+  background: rgba(255, 59, 48, 0.12);
+}
+
+.pill-skip {
+  color: var(--ios-orange);
+  background: rgba(255, 149, 0, 0.14);
+}
+
+.pill-auto {
+  color: var(--ios-blue);
+  background: rgba(0, 122, 255, 0.12);
 }

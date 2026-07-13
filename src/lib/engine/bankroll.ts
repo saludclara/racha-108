@@ -162,9 +162,26 @@ export function applySkip(
   };
 }
 
-export function simulateOutcome(pick: ScoredPick, rng = Math.random): boolean {
-  // True win probability blends modelProb with a slight house softness
-  // so simulation feels realistic for low-odds grind markets.
-  const p = Math.min(0.97, Math.max(0.55, pick.modelProb * 0.98));
-  return rng() < p;
+function seededUnit(seed: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // xorshift-ish to (0,1)
+  let x = h >>> 0;
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  return (x >>> 0) / 4294967296;
+}
+
+/**
+ * Deterministic per hour+market. Win chance tracks modelProb closely
+ * (high-accuracy grind) with a tiny noise floor for realism.
+ */
+export function simulateOutcome(pick: ScoredPick): boolean {
+  const roll = seededUnit(`${pick.hourKey}|${pick.match.id}|${pick.market}`);
+  const p = Math.min(0.975, Math.max(0.72, pick.modelProb * 0.995));
+  return roll < p;
 }
