@@ -17,7 +17,7 @@ export default function RachaPage() {
           {state.streak}/{STREAK_GOAL}
         </h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Mejor: {state.bestStreak}. SKIP no rompe la racha.
+          Mejor: {state.bestStreak}. Partidos ficticios (SIM).
         </p>
       </header>
 
@@ -45,32 +45,31 @@ export default function RachaPage() {
           <p className="p-4 text-[15px] text-[var(--muted)]">Sin apuestas aún.</p>
         )}
         {state.history.slice(0, 30).map((h) => (
-          <div key={h.id} className="flex items-start justify-between gap-3 px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`pill ${
-                    h.outcome === "win"
-                      ? "pill-win"
-                      : h.outcome === "loss"
-                        ? "pill-loss"
-                        : "pill-skip"
-                  }`}
-                >
-                  {h.outcome.toUpperCase()}
-                </span>
-                <p className="truncate text-[15px] font-medium">
-                  {h.matchLabel ?? "—"}
-                </p>
-              </div>
-                <p className="mt-1 text-[13px] text-[var(--muted)]">
-                  {h.marketLabel ?? h.note ?? ""}
-                  {h.score != null ? ` · ${h.score.toFixed(0)}` : ""}
-                  {" · SIM"}
-                </p>
-                <p className="mt-1 text-[12px] text-[var(--muted)]">
-                  {formatBetWhen(h.hourKey, h.at, state.settings.timezone)}
-                </p>
+          <div key={h.id} className="px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span
+                className={`pill ${
+                  h.outcome === "win"
+                    ? "pill-win"
+                    : h.outcome === "loss"
+                      ? "pill-loss"
+                      : "pill-skip"
+                }`}
+              >
+                {h.outcome.toUpperCase()}
+              </span>
+              <span className="pill pill-auto">SIM</span>
+              <p className="truncate text-[15px] font-medium">
+                {h.matchLabel ?? "—"}
+              </p>
+            </div>
+            <p className="mt-1 text-[13px] text-[var(--muted)]">
+              {h.marketLabel ?? h.note ?? ""}
+              {h.score != null ? ` · ${h.score.toFixed(0)}` : ""}
+            </p>
+            <p className="mt-1 text-[12px] text-[var(--muted)]">
+              {formatBetWhen(h.hourKey, h.at, state.settings.timezone)}
+            </p>
           </div>
         ))}
       </div>
