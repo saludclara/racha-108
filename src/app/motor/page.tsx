@@ -1,33 +1,33 @@
 "use client";
 
-import { TILT_GUARD_HOURS } from "@/lib/engine";
+import { SCORE_WEIGHTS, TILT_GUARD_HOURS } from "@/lib/engine";
 import { useApp } from "@/lib/store";
 
 const LAYERS = [
   {
-    w: "40%",
+    w: `${Math.round(SCORE_WEIGHTS.football * 100)}%`,
     title: "Probabilidad futbolística",
     body: "Dixon–Coles + Poisson: goles esperados, forma ponderada, ventaja local.",
   },
   {
-    w: "28%",
+    w: `${Math.round(SCORE_WEIGHTS.stats * 100)}%`,
     title: "Estudio y estadísticas",
     body: "xG, descanso, lesiones, motivación y fit del mercado.",
   },
   {
-    w: "22%",
+    w: `${Math.round(SCORE_WEIGHTS.value * 100)}%`,
     title: "Matemática de valor",
     body: "Edge vs implícita y Kelly fraccional solo como filtro.",
   },
   {
-    w: "5%",
+    w: `${Math.round(SCORE_WEIGHTS.numerology * 100)}%`,
     title: "Numerología",
-    body: "Capa simbólica suave (11.11 / 108).",
+    body: "Arcano mayor del día, número universal, camino de vida, vibración horaria, resonancia 11.11/108 y afinidad con el mercado.",
   },
   {
-    w: "5%",
+    w: `${Math.round(SCORE_WEIGHTS.stars * 100)}%`,
     title: "Estrellas",
-    body: "Modificador lúdico de atmósfera.",
+    body: "Signo solar, fase lunar y atmósfera del día (modificador, no dominante).",
   },
 ];
 
@@ -48,7 +48,10 @@ export default function MotorPage() {
 
       <div className="ios-card p-5">
         <p className="text-[13px] text-[var(--muted)]">Umbral activo</p>
-        <p className="text-[34px] font-bold tracking-tight" style={{ color: "var(--ios-blue)" }}>
+        <p
+          className="text-[34px] font-bold tracking-tight"
+          style={{ color: "var(--ios-blue)" }}
+        >
           {threshold}
         </p>
         {tiltActive ? (
@@ -67,7 +70,10 @@ export default function MotorPage() {
           <article key={l.title} className="ios-card p-4">
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="font-semibold tracking-tight">{l.title}</h2>
-              <span className="text-[13px] font-semibold" style={{ color: "var(--ios-blue)" }}>
+              <span
+                className="text-[13px] font-semibold"
+                style={{ color: "var(--ios-blue)" }}
+              >
                 {l.w}
               </span>
             </div>

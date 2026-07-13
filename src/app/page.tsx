@@ -89,10 +89,19 @@ export default function HomePage() {
       </section>
 
       {pick && state.pickStatus === "pending" && (
-        <section className="ios-card p-4">
+        <Link
+          href="/pick"
+          className="ios-card block p-4 transition-opacity active:opacity-70"
+        >
           <div className="flex items-center justify-between gap-2">
             <p className="text-[13px] text-[var(--muted)]">Pick en curso</p>
-            <span className="pill" style={{ color: "var(--ios-orange)", background: "rgba(255,149,0,0.14)" }}>
+            <span
+              className="pill"
+              style={{
+                color: "var(--ios-orange)",
+                background: "rgba(255,149,0,0.14)",
+              }}
+            >
               PENDING
             </span>
           </div>
@@ -109,7 +118,7 @@ export default function HomePage() {
               { timeZone: state.settings.timezone },
             )}
           </p>
-        </section>
+        </Link>
       )}
 
       {last && state.pickStatus === "resolved" && (

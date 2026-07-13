@@ -4,6 +4,11 @@ import {
   isOddsInRange,
   requiresExtremeFavorite,
 } from "./markets";
+import {
+  SCORE_WEIGHTS,
+  computeNumerologyScore,
+  computeStarsScore,
+} from "./numerology";
 import { marketModelProb } from "./model";
 import type {
   LayerScore,
@@ -12,13 +17,7 @@ import type {
   ScoredPick,
 } from "./types";
 
-const WEIGHTS = {
-  football: 0.4,
-  stats: 0.28,
-  value: 0.22,
-  numerology: 0.05,
-  stars: 0.05,
-} as const;
+const WEIGHTS = SCORE_WEIGHTS;
 
 export const MIN_MODEL_PROB = 0.78;
 export const MIN_EDGE = -0.01;
@@ -39,38 +38,38 @@ function formAvg(form: number[]): number {
   return s / w;
 }
 
-function digitSum(n: number): number {
-  let x = Math.abs(Math.floor(n));
-  while (x > 9) {
-    x = String(x)
-      .split("")
-      .reduce((a, d) => a + Number(d), 0);
-  }
-  return x;
+function numerologyLayer(
+  date: Date,
+  hourKey: string,
+  match: MatchCandidate,
+  market: MarketType,
+  odds: number,
+): LayerScore {
+  const { score, note } = computeNumerologyScore(
+    date,
+    hourKey,
+    match.matchday,
+    market,
+    odds,
+  );
+  return {
+    key: "numerology",
+    label: "Numerología del día",
+    weight: WEIGHTS.numerology,
+    score,
+    note,
+  };
 }
 
-function dayNumber(date: Date): number {
-  return digitSum(date.getFullYear() + date.getMonth() + 1 + date.getDate());
-}
-
-function lunarPhase01(date: Date): number {
-  const synodic = 29.53058867;
-  const knownNew = Date.UTC(2000, 0, 6, 18, 14);
-  const days = (date.getTime() - knownNew) / 86400000;
-  const phase = ((days % synodic) + synodic) % synodic;
-  return phase / synodic;
-}
-
-function zodiacIndex(date: Date): number {
-  const m = date.getMonth() + 1;
-  const d = date.getDate();
-  const md = m * 100 + d;
-  const cuts = [120, 219, 321, 420, 521, 621, 723, 823, 923, 1023, 1122, 1222];
-  let i = 0;
-  for (let c = 0; c < cuts.length; c++) {
-    if (md >= cuts[c]) i = c + 1;
-  }
-  return i % 12;
+function starsLayer(date: Date): LayerScore {
+  const { score, note } = computeStarsScore(date);
+  return {
+    key: "stars",
+    label: "Estrellas / atmósfera",
+    weight: WEIGHTS.stars,
+    score,
+    note,
+  };
 }
 
 function footballLayer(
@@ -143,39 +142,6 @@ function valueLayer(odds: number, modelProb: number): LayerScore {
   };
 }
 
-function numerologyLayer(
-  date: Date,
-  match: MatchCandidate,
-  odds: number,
-): LayerScore {
-  const day = dayNumber(date);
-  const affinity = day === 1 || day === 2 || day === 8 ? 10 : 0;
-  const matchdayAff = digitSum(match.matchday) === 9 ? 6 : 0;
-  const oddsDigits = digitSum(Math.round(odds * 100));
-  const elevenPull = oddsDigits === 2 || oddsDigits === 1 ? 4 : 0;
-  return {
-    key: "numerology",
-    label: "Numerología del día",
-    weight: WEIGHTS.numerology,
-    score: clamp(60 + affinity + matchdayAff + elevenPull),
-    note: `día ${day} · jornada ${match.matchday} (simbólica)`,
-  };
-}
-
-function starsLayer(date: Date): LayerScore {
-  const phase = lunarPhase01(date);
-  const lunar = 1 - Math.abs(phase - 0.5) * 1.2;
-  const z = zodiacIndex(date);
-  const earthBoost = [1, 4, 7, 10].includes(z) ? 6 : 0;
-  return {
-    key: "stars",
-    label: "Estrellas / atmósfera",
-    weight: WEIGHTS.stars,
-    score: clamp(58 + lunar * 22 + earthBoost),
-    note: `luna ${(phase * 100).toFixed(0)}% (lúdica)`,
-  };
-}
-
 function buildScoredPick(
   match: MatchCandidate,
   market: MarketType,
@@ -201,7 +167,7 @@ function buildScoredPick(
     footballLayer(market, match, modelProb),
     statsLayer(match, market),
     valueLayer(odds, modelProb),
-    numerologyLayer(now, match, odds),
+    numerologyLayer(now, hourKey, match, market, odds),
     starsLayer(now),
   ];
 
