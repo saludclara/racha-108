@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* deploy-ready defaults */
+  // Hide the Next.js dev tools badge; errors still surface when they happen
+  devIndicators: false,
 };
 
 export default nextConfig;
