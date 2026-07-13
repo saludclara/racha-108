@@ -4,8 +4,8 @@
   "description": "Apuestas ficticias de bajo riesgo · 11.11 AUD/hora · objetivo 108",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0c1412",
-  "theme_color": "#0c1412",
+  "background_color": "#f2f2f7",
+  "theme_color": "#f2f2f7",
   "orientation": "portrait-primary",
   "icons": [
     {

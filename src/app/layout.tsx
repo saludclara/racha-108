@@ -13,6 +13,9 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
     title: "Racha 108",
   },
+  other: {
+    "color-scheme": "light only",
+  },
   icons: {
     icon: [
       { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
