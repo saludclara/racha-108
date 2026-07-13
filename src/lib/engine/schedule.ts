@@ -60,3 +60,35 @@ export function formatMoneyAUD(amount: number): string {
     minimumFractionDigits: 2,
   }).format(amount);
 }
+
+/** Pretty label for hourKey `YYYY-MM-DDTHH` + optional ISO timestamp */
+export function formatBetWhen(
+  hourKey: string,
+  atIso?: string,
+  timeZone = DEFAULT_TIMEZONE,
+): string {
+  const clean = hourKey.split("-r")[0] ?? hourKey;
+  const [datePart, hourPart] = clean.split("T");
+  if (!datePart || hourPart == null) {
+    return atIso
+      ? new Date(atIso).toLocaleString("es-AU", { timeZone })
+      : hourKey;
+  }
+  const hourLabel = `${hourPart.padStart(2, "0")}:00`;
+  const dateLabel = new Date(`${datePart}T12:00:00`).toLocaleDateString("es-AU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone,
+  });
+  if (atIso) {
+    const clock = new Date(atIso).toLocaleTimeString("es-AU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    });
+    return `${dateLabel} · franja ${hourLabel} · liquidada ${clock}`;
+  }
+  return `${dateLabel} · franja ${hourLabel}`;
+}
+
