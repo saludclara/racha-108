@@ -37,32 +37,32 @@ function mulberry32(seed: number) {
 }
 
 const HOME_POOL = [
-  "Sydney FC",
-  "Melbourne City",
-  "Auckland FC",
-  "Brisbane Roar",
-  "Western United",
-  "Macarthur FC",
-  "Adelaide United",
-  "Perth Glory",
-  "Wellington Phoenix",
-  "Newcastle Jets",
+  "Harbour North FC",
+  "River City United",
+  "Bayview Athletic",
+  "Summit Rovers",
+  "Ironbark FC",
+  "Coastline United",
+  "Red Sand FC",
+  "Lake District AFC",
+  "Crown Hills",
+  "Pacific Gate FC",
 ];
 
 const AWAY_POOL = [
-  "Central Coast",
-  "Western Sydney",
-  "Melbourne Victory",
-  "Canberra United",
-  "Gold Coast United",
-  "Tasmania Rovers",
-  "Darwin Rangers",
-  "Hobart City",
-  "Geelong Mariners",
-  "Cairns Titans",
+  "Southern Drift",
+  "Eastvale Wanderers",
+  "North Pier SC",
+  "Amber Field",
+  "Copper Coast",
+  "Willow Park",
+  "Stone Harbour",
+  "Coral Ridge",
+  "Maple United",
+  "Silverstream FC",
 ];
 
-const LEAGUES = ["A-League Sim", "NPL Elite Sim", "Pacific Cup Sim"];
+const LEAGUES = ["Racha Sim League", "Pacific Paper Cup", "Night Grind Division"];
 
 export function generateSimMatches(hourKey: string): MatchCandidate[] {
   const rng = mulberry32(hashSeed(hourKey));

@@ -260,14 +260,14 @@ function lockTeam(name: string, side: "home" | "away"): TeamStats {
 
 /** Absolute fallback so the hourly auto-pick never dies */
 export function createGuaranteedPick(hourKey: string, now = new Date()): ScoredPick {
-  const home = lockTeam("Sydney FC", "home");
-  const away = lockTeam("Central Coast", "away");
+  const home = lockTeam("Harbour North FC", "home");
+  const away = lockTeam("Southern Drift", "away");
   const modelProb = marketModelProb("under_35", home, away);
   const odds = fairOdds(Math.max(modelProb, 0.9), 0.04);
   const match: MatchCandidate = {
     id: `${hourKey}-lock`,
     kickoff: `${hourKey}:15:00`,
-    league: "A-League Sim",
+    league: "Racha Sim League",
     home,
     away,
     odds: { under_35: odds },

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Countdown, Money } from "@/components/Countdown";
-import { STREAK_GOAL } from "@/lib/engine";
+import { STREAK_GOAL, formatBetWhen } from "@/lib/engine";
 import { useApp } from "@/lib/store";
 
 export default function HomePage() {
@@ -79,7 +79,10 @@ export default function HomePage() {
 
       {last && (
         <section className="ios-card p-4">
-          <p className="text-[13px] text-[var(--muted)]">Última hora</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] text-[var(--muted)]">Última liquidación</p>
+            <span className="pill pill-auto">SIM</span>
+          </div>
           <div className="mt-2 flex items-center gap-2">
             <span
               className={`pill ${
@@ -96,6 +99,12 @@ export default function HomePage() {
               {last.matchLabel ?? last.note}
             </p>
           </div>
+          <p className="mt-2 text-[13px] text-[var(--muted)]">
+            {formatBetWhen(last.hourKey, last.at, state.settings.timezone)}
+          </p>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
+            Partido ficticio generado por el motor — no es un fixture real.
+          </p>
         </section>
       )}
 

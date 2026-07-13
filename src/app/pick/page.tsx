@@ -58,7 +58,10 @@ export default function PickPage() {
           )}
 
           <p className="text-[13px] text-[var(--muted)]">
-            {pick.match.league} · jornada {pick.match.matchday}
+            {pick.match.league} · jornada {pick.match.matchday} ·{" "}
+            <span className="font-semibold" style={{ color: "var(--ios-blue)" }}>
+              SIM
+            </span>
           </p>
           <h2 className="mt-1 text-[22px] font-semibold tracking-tight leading-snug">
             {pick.match.home.name}{" "}

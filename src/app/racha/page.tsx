@@ -1,6 +1,6 @@
 "use client";
 
-import { STREAK_GOAL } from "@/lib/engine";
+import { STREAK_GOAL, formatBetWhen } from "@/lib/engine";
 import { useApp } from "@/lib/store";
 
 export default function RachaPage() {
@@ -63,12 +63,14 @@ export default function RachaPage() {
                   {h.matchLabel ?? "—"}
                 </p>
               </div>
-              <p className="mt-1 text-[13px] text-[var(--muted)]">
-                {h.marketLabel ?? h.note ?? ""}
-                {h.score != null ? ` · ${h.score.toFixed(0)}` : ""}
-              </p>
-            </div>
-            <p className="shrink-0 text-[11px] text-[var(--muted)]">{h.hourKey}</p>
+                <p className="mt-1 text-[13px] text-[var(--muted)]">
+                  {h.marketLabel ?? h.note ?? ""}
+                  {h.score != null ? ` · ${h.score.toFixed(0)}` : ""}
+                  {" · SIM"}
+                </p>
+                <p className="mt-1 text-[12px] text-[var(--muted)]">
+                  {formatBetWhen(h.hourKey, h.at, state.settings.timezone)}
+                </p>
           </div>
         ))}
       </div>
