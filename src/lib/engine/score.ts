@@ -4,13 +4,12 @@ import {
   isOddsInRange,
   requiresExtremeFavorite,
 } from "./markets";
-import { fairOdds, marketModelProb } from "./model";
+import { marketModelProb } from "./model";
 import type {
   LayerScore,
   MarketType,
   MatchCandidate,
   ScoredPick,
-  TeamStats,
 } from "./types";
 
 const WEIGHTS = {
@@ -21,8 +20,8 @@ const WEIGHTS = {
   stars: 0.05,
 } as const;
 
-export const MIN_MODEL_PROB = 0.82;
-export const MIN_EDGE = -0.005;
+export const MIN_MODEL_PROB = 0.78;
+export const MIN_EDGE = -0.01;
 
 function clamp(n: number, min = 0, max = 100): number {
   return Math.min(max, Math.max(min, n));
@@ -227,106 +226,6 @@ function buildScoredPick(
   };
 }
 
-function lockTeam(name: string, side: "home" | "away"): TeamStats {
-  if (side === "home") {
-    return {
-      name,
-      attack: 0.95,
-      defense: 0.48,
-      form: [1, 1, 1, 1, 1],
-      xgFor: 0.95,
-      xgAgainst: 0.4,
-      shotsPerGame: 11,
-      possession: 58,
-      restDays: 7,
-      injuries: 0,
-      motivation: 0.92,
-    };
-  }
-  return {
-    name,
-    attack: 0.42,
-    defense: 1.15,
-    form: [0, 0.5, 0, 0.5, 0],
-    xgFor: 0.45,
-    xgAgainst: 1.45,
-    shotsPerGame: 7,
-    possession: 42,
-    restDays: 3,
-    injuries: 3,
-    motivation: 0.4,
-  };
-}
-
-/** Absolute fallback so the hourly auto-pick never dies */
-export function createGuaranteedPick(hourKey: string, now = new Date()): ScoredPick {
-  const home = lockTeam("Harbour North FC", "home");
-  const away = lockTeam("Southern Drift", "away");
-  const modelProb = marketModelProb("under_35", home, away);
-  const odds = fairOdds(Math.max(modelProb, 0.9), 0.04);
-  const match: MatchCandidate = {
-    id: `${hourKey}-lock`,
-    kickoff: `${hourKey}:15:00`,
-    league: "Racha Sim League",
-    home,
-    away,
-    odds: { under_35: odds },
-    matchday: 11,
-  };
-  const scored = buildScoredPick(match, "under_35", hourKey, now, {
-    strict: false,
-  });
-  if (scored) return scored;
-  // Ultimate hard-coded pick
-  return {
-    match,
-    market: "under_35",
-    marketLabel: MARKET_LABELS.under_35,
-    odds,
-    modelProb: Math.max(modelProb, 0.92),
-    edge: Math.max(modelProb, 0.92) - 1 / odds,
-    totalScore: 90,
-    layers: [
-      {
-        key: "football",
-        label: "Probabilidad futbolística",
-        weight: 0.4,
-        score: 92,
-        note: "Lock defensivo garantizado",
-      },
-      {
-        key: "stats",
-        label: "Estudio y estadísticas",
-        weight: 0.28,
-        score: 90,
-        note: "xG total bajo",
-      },
-      {
-        key: "value",
-        label: "Matemática de valor",
-        weight: 0.22,
-        score: 88,
-        note: "Edge positivo calibrado",
-      },
-      {
-        key: "numerology",
-        label: "Numerología del día",
-        weight: 0.05,
-        score: 70,
-        note: "simbólica",
-      },
-      {
-        key: "stars",
-        label: "Estrellas / atmósfera",
-        weight: 0.05,
-        score: 70,
-        note: "lúdica",
-      },
-    ],
-    hourKey,
-  };
-}
-
 const marketPriority: Partial<Record<MarketType, number>> = {
   under_35: 5,
   double_chance_1x: 4,
@@ -347,15 +246,17 @@ function rankPicks(list: ScoredPick[]): ScoredPick[] {
 }
 
 /**
- * Always returns a pick. Prefers high-confidence grind markets;
- * falls back to a guaranteed defensive lock.
+ * Best real-match grind pick. Returns null if no real candidates qualify.
+ * Never invents fixtures.
  */
 export function pickBestForHour(
   matches: MatchCandidate[],
   hourKey: string,
   threshold: number,
   now = new Date(),
-): ScoredPick {
+): ScoredPick | null {
+  if (!matches.length) return null;
+
   const primary: ScoredPick[] = [];
   const soft: ScoredPick[] = [];
 
@@ -380,5 +281,5 @@ export function pickBestForHour(
 
   if (primary.length) return rankPicks(primary)[0];
   if (soft.length) return rankPicks(soft)[0];
-  return createGuaranteedPick(hourKey, now);
+  return null;
 }

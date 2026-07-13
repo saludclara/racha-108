@@ -10,30 +10,33 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { generateSimMatches } from "@/lib/data/sim";
 import {
   applyLoss,
+  applyPush,
+  applySkip,
   applyWin,
   createInitialState,
   effectiveThreshold,
   hourKeyFor,
   isTiltActive,
-  pickBestForHour,
-  simulateOutcome,
   type AppSettings,
   type AppState,
+  type ScoredPick,
 } from "@/lib/engine";
+import type { HourlyPickResponse } from "@/lib/data/real";
 
-const STORAGE_KEY = "racha-108-state-v3";
+const STORAGE_KEY = "racha-108-state-v4-real";
 
 type AppContextValue = {
   state: AppState;
   ready: boolean;
   threshold: number;
   tiltActive: boolean;
+  apiMessage: string | null;
+  matchCount: number;
   updateSettings: (patch: Partial<AppSettings>) => void;
   resetAll: () => void;
-  runNextHour: () => void;
+  refreshNow: () => void;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -41,27 +44,14 @@ const AppContext = createContext<AppContextValue | null>(null);
 function loadState(): AppState {
   if (typeof window === "undefined") return createInitialState();
   try {
-    // Prefer v3; migrate/clear stuck v2 skips
-    const raw =
-      localStorage.getItem(STORAGE_KEY) ??
-      localStorage.getItem("racha-108-state-v2");
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return createInitialState();
     const parsed = JSON.parse(raw) as AppState;
-    const base = {
+    return {
       ...createInitialState(),
       ...parsed,
       settings: { ...createInitialState().settings, ...parsed.settings },
     };
-    // Don't carry over a stuck SKIP for the current hour
-    if (base.pickStatus === "skipped") {
-      return {
-        ...base,
-        pickStatus: "idle",
-        currentPick: null,
-        lastResolvedHourKey: null,
-      };
-    }
-    return base;
   } catch {
     return createInitialState();
   }
@@ -69,75 +59,81 @@ function loadState(): AppState {
 
 function saveState(state: AppState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  localStorage.removeItem("racha-108-state-v2");
 }
 
-function settlePick(
-  state: AppState,
-  pick: NonNullable<AppState["currentPick"]>,
-) {
-  if (state.goalReached) {
-    return {
-      ...state,
-      currentHourKey: pick.hourKey,
-      currentPick: pick,
-      pickStatus: "resolved" as const,
-      lastResolvedHourKey: pick.hourKey,
-    };
+async function fetchHourly(
+  hourKey: string,
+  threshold: number,
+): Promise<HourlyPickResponse> {
+  const res = await fetch(
+    `/api/hourly?hourKey=${encodeURIComponent(hourKey)}&threshold=${threshold}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) {
+    throw new Error(`API ${res.status}`);
   }
-  const won = simulateOutcome(pick);
-  return won ? applyWin(state, pick) : applyLoss(state, pick);
+  return (await res.json()) as HourlyPickResponse;
 }
 
-/**
- * Always produces and settles one pick for the hour. Never SKIP.
- */
-export function processHour(
+async function fetchRefresh(pick: ScoredPick): Promise<HourlyPickResponse> {
+  const res = await fetch("/api/hourly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pick }),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return (await res.json()) as HourlyPickResponse;
+}
+
+function applyApiResult(
   state: AppState,
   hourKey: string,
-  now = new Date(),
+  data: HourlyPickResponse,
 ): AppState {
+  if (data.status === "empty" || !data.pick) {
+    if (state.lastResolvedHourKey === hourKey) return state;
+    return applySkip(
+      { ...state, currentHourKey: hourKey, currentPick: null },
+      hourKey,
+      data.message ?? "Sin partidos reales elegibles esta hora.",
+    );
+  }
+
+  if (data.status === "pending") {
+    return {
+      ...state,
+      currentHourKey: hourKey,
+      currentPick: data.pick,
+      pickStatus: "pending",
+    };
+  }
+
+  // settled
   if (state.lastResolvedHourKey === hourKey && state.pickStatus === "resolved") {
-    return { ...state, currentHourKey: hourKey };
+    return {
+      ...state,
+      currentHourKey: hourKey,
+      currentPick: data.pick,
+    };
   }
 
-  // Re-run if previous attempt was a skip stuck in storage
-  if (state.lastResolvedHourKey === hourKey && state.pickStatus === "skipped") {
-    // fall through and re-settle
-  } else if (state.lastResolvedHourKey === hourKey) {
-    return { ...state, currentHourKey: hourKey };
-  }
-
-  const threshold = effectiveThreshold(
-    state.settings,
-    state.tiltGuardUntil,
-    now,
-  );
-
-  let pick;
-  try {
-    const matches = generateSimMatches(hourKey);
-    pick = pickBestForHour(matches, hourKey, threshold, now);
-  } catch {
-    pick = pickBestForHour([], hourKey, threshold, now);
-  }
-
+  const pick = data.pick;
   const withPick: AppState = {
     ...state,
     currentHourKey: hourKey,
     currentPick: pick,
     pickStatus: "ready",
-    lastResolvedHourKey: null,
   };
 
-  return settlePick(withPick, pick);
-}
+  if (data.settle === "win") return applyWin(withPick, pick);
+  if (data.settle === "push") return applyPush(withPick, pick);
+  if (data.settle === "loss") return applyLoss(withPick, pick);
 
-function nextHourKey(baseKey: string): string {
-  const clean = baseKey.split("-r")[0] ?? baseKey;
-  const [datePart, hourPart] = clean.split("T");
-  const h = (Number(hourPart) + 1) % 24;
-  return `${datePart}T${String(h).padStart(2, "0")}`;
+  return {
+    ...withPick,
+    pickStatus: "pending",
+  };
 }
 
 function subscribeHydration(onStoreChange: () => void) {
@@ -162,32 +158,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [state, setState] = useState<AppState>(() => createInitialState());
   const [didLoad, setDidLoad] = useState(false);
-
-  if (hydrated && !didLoad) {
-    setDidLoad(true);
-    const loaded = loadState();
-    const hourKey = hourKeyFor(new Date(), loaded.settings.timezone);
-    setState(processHour(loaded, hourKey));
-  }
-
-  useEffect(() => {
-    if (!didLoad) return;
-    saveState(state);
-  }, [state, didLoad]);
-
-  useEffect(() => {
-    if (!didLoad) return;
-    const id = setInterval(() => {
-      setState((s) => {
-        const hourKey = hourKeyFor(new Date(), s.settings.timezone);
-        if (s.lastResolvedHourKey === hourKey && s.pickStatus === "resolved") {
-          return s;
-        }
-        return processHour(s, hourKey);
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [didLoad]);
+  const [apiMessage, setApiMessage] = useState<string | null>(null);
+  const [matchCount, setMatchCount] = useState(0);
+  const [tick, setTick] = useState(0);
 
   const threshold = useMemo(
     () => effectiveThreshold(state.settings, state.tiltGuardUntil),
@@ -195,6 +168,76 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const tiltActive = isTiltActive(state.tiltGuardUntil);
+
+  if (hydrated && !didLoad) {
+    setDidLoad(true);
+    setState(loadState());
+  }
+
+  useEffect(() => {
+    if (!didLoad) return;
+    saveState(state);
+  }, [state, didLoad]);
+
+  // Fetch / refresh real ESPN pick
+  useEffect(() => {
+    if (!didLoad) return;
+    let cancelled = false;
+
+    (async () => {
+      const hourKey = hourKeyFor(new Date(), state.settings.timezone);
+      try {
+        let data: HourlyPickResponse;
+
+        if (
+          state.pickStatus === "pending" &&
+          state.currentPick &&
+          state.currentHourKey === hourKey
+        ) {
+          data = await fetchRefresh(state.currentPick);
+        } else if (
+          state.lastResolvedHourKey === hourKey &&
+          state.pickStatus === "resolved"
+        ) {
+          setApiMessage("Pick de esta hora ya liquidado con resultado real.");
+          return;
+        } else {
+          data = await fetchHourly(hourKey, threshold);
+        }
+
+        if (cancelled) return;
+        setApiMessage(data.message ?? null);
+        setMatchCount(data.matchCount);
+        setState((s) => applyApiResult(s, hourKey, data));
+      } catch (err) {
+        if (cancelled) return;
+        console.error(err);
+        setApiMessage(
+          "Error consultando partidos reales (ESPN). Reintentando…",
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional refresh drivers
+  }, [
+    didLoad,
+    tick,
+    state.settings.timezone,
+    threshold,
+    state.pickStatus,
+    state.currentHourKey,
+    state.lastResolvedHourKey,
+  ]);
+
+  // Poll while pending; also detect hour flip
+  useEffect(() => {
+    if (!didLoad) return;
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, [didLoad]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setState((s) => ({
@@ -205,51 +248,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const resetAll = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem("racha-108-state-v3");
     localStorage.removeItem("racha-108-state-v2");
-    const fresh = createInitialState();
-    const hourKey = hourKeyFor(new Date(), fresh.settings.timezone);
-    setState(processHour(fresh, hourKey));
+    setState(createInitialState());
+    setTick((t) => t + 1);
   }, []);
 
-  const runNextHour = useCallback(() => {
-    setState((s) => {
-      try {
-        const base =
-          s.currentHourKey ?? hourKeyFor(new Date(), s.settings.timezone);
-
-        // If stuck on skip for this hour, re-settle the same hour first
-        if (s.pickStatus === "skipped") {
-          const cleared: AppState = {
-            ...s,
-            pickStatus: "idle",
-            currentPick: null,
-            lastResolvedHourKey: null,
-          };
-          return processHour(cleared, base);
-        }
-
-        const fakeKey = nextHourKey(base);
-        const cleared: AppState = {
-          ...s,
-          pickStatus: "idle",
-          currentPick: null,
-          lastResolvedHourKey: null,
-        };
-        return processHour(cleared, fakeKey);
-      } catch (err) {
-        console.error("runNextHour failed", err);
-        const hourKey = hourKeyFor(new Date(), s.settings.timezone);
-        return processHour(
-          {
-            ...s,
-            pickStatus: "idle",
-            currentPick: null,
-            lastResolvedHourKey: null,
-          },
-          `${hourKey}-recover`,
-        );
-      }
-    });
+  const refreshNow = useCallback(() => {
+    setTick((t) => t + 1);
   }, []);
 
   const value: AppContextValue = {
@@ -257,9 +263,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ready: didLoad,
     threshold,
     tiltActive,
+    apiMessage,
+    matchCount,
     updateSettings,
     resetAll,
-    runNextHour,
+    refreshNow,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

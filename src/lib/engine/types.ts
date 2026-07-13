@@ -16,7 +16,7 @@ export type MarketType =
   | "ah_home_m025"
   | "ah_home_m05";
 
-export type BetOutcome = "win" | "loss" | "skip" | "pending";
+export type BetOutcome = "win" | "loss" | "skip" | "pending" | "push";
 
 export interface TeamStats {
   name: string;
@@ -40,6 +40,13 @@ export interface MatchCandidate {
   away: TeamStats;
   odds: Partial<Record<MarketType, number>>;
   matchday: number;
+  /** Real provider id (e.g. ESPN event id) */
+  externalId?: string;
+  kickoffUtc?: string;
+  status?: "scheduled" | "inplay" | "finished";
+  homeScore?: number;
+  awayScore?: number;
+  provider?: "espn";
 }
 
 export interface LayerScore {
@@ -106,7 +113,7 @@ export interface AppState {
   vaultLedger: VaultDeposit[];
   currentPick: ScoredPick | null;
   currentHourKey: string | null;
-  pickStatus: "idle" | "ready" | "placed" | "skipped" | "resolved";
+  pickStatus: "idle" | "ready" | "placed" | "skipped" | "resolved" | "pending";
   lastResolvedHourKey: string | null;
   goalReached: boolean;
   createdAt: string;

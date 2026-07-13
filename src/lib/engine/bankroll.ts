@@ -162,26 +162,35 @@ export function applySkip(
   };
 }
 
-function seededUnit(seed: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  // xorshift-ish to (0,1)
-  let x = h >>> 0;
-  x ^= x << 13;
-  x ^= x >>> 17;
-  x ^= x << 5;
-  return (x >>> 0) / 4294967296;
-}
+/** Draw No Bet void: stake back, streak unchanged */
+export function applyPush(
+  state: AppState,
+  pick: ScoredPick,
+  now = new Date(),
+): AppState {
+  const stake = state.hotStack;
+  const entry: HistoryEntry = {
+    id: `bet-${now.getTime()}`,
+    hourKey: pick.hourKey,
+    at: now.toISOString(),
+    outcome: "push",
+    stake,
+    odds: pick.odds,
+    payout: stake,
+    profit: 0,
+    vaultAdded: 0,
+    marketLabel: pick.marketLabel,
+    matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
+    score: pick.totalScore,
+    layers: pick.layers,
+    note: "Push (ej. DNB en empate) — stake devuelto",
+  };
 
-/**
- * Deterministic per hour+market. Win chance tracks modelProb closely
- * (high-accuracy grind) with a tiny noise floor for realism.
- */
-export function simulateOutcome(pick: ScoredPick): boolean {
-  const roll = seededUnit(`${pick.hourKey}|${pick.match.id}|${pick.market}`);
-  const p = Math.min(0.975, Math.max(0.72, pick.modelProb * 0.995));
-  return roll < p;
+  return {
+    ...state,
+    history: [entry, ...state.history],
+    pickStatus: "resolved",
+    lastResolvedHourKey: pick.hourKey,
+    currentPick: pick,
+  };
 }

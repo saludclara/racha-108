@@ -17,7 +17,7 @@ export default function RachaPage() {
           {state.streak}/{STREAK_GOAL}
         </h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Mejor: {state.bestStreak}. Partidos ficticios (SIM).
+          Mejor: {state.bestStreak}. Solo liquidaciones con marcador real.
         </p>
       </header>
 
@@ -58,7 +58,7 @@ export default function RachaPage() {
               >
                 {h.outcome.toUpperCase()}
               </span>
-              <span className="pill pill-auto">SIM</span>
+              <span className="pill pill-auto">REAL</span>
               <p className="truncate text-[15px] font-medium">
                 {h.matchLabel ?? "—"}
               </p>

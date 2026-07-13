@@ -6,7 +6,8 @@ import { STREAK_GOAL, formatBetWhen } from "@/lib/engine";
 import { useApp } from "@/lib/store";
 
 export default function HomePage() {
-  const { state, ready, tiltActive, threshold } = useApp();
+  const { state, ready, tiltActive, threshold, apiMessage, matchCount } =
+    useApp();
 
   if (!ready) {
     return (
@@ -18,12 +19,13 @@ export default function HomePage() {
 
   const progress = Math.min(100, (state.streak / STREAK_GOAL) * 100);
   const last = state.history[0];
+  const pick = state.currentPick;
 
   return (
     <div className="rise space-y-5 pb-4">
       <header className="pt-3">
         <p className="section-label !normal-case !tracking-normal">
-          Automático · 11.11 AUD · 1/hora
+          Partidos reales · ESPN · 11.11 AUD · 1/hora
         </p>
         <h1 className="large-title">
           Racha <span style={{ color: "var(--ios-blue)" }}>108</span>
@@ -32,12 +34,21 @@ export default function HomePage() {
 
       <section className="ios-card p-5">
         <div className="flex items-center justify-between">
-          <p className="text-[13px] text-[var(--muted)]">Próximo pick</p>
-          <span className="pill pill-auto">Auto</span>
+          <p className="text-[13px] text-[var(--muted)]">Próxima hora</p>
+          <span className="pill pill-auto">LIVE DATA</span>
         </div>
         <Countdown />
         <p className="mt-2 text-[13px] text-[var(--muted)]">
-          El motor apuesta solo, una vez por hora.
+          Pick automático sobre fixtures reales. Se liquida con el marcador
+          oficial.
+        </p>
+        {apiMessage && (
+          <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>
+            {apiMessage}
+          </p>
+        )}
+        <p className="mt-1 text-[12px] text-[var(--muted)]">
+          {matchCount} partidos en feed · umbral {threshold}
         </p>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
@@ -77,11 +88,35 @@ export default function HomePage() {
         </div>
       </section>
 
-      {last && (
+      {pick && state.pickStatus === "pending" && (
+        <section className="ios-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] text-[var(--muted)]">Pick en curso</p>
+            <span className="pill" style={{ color: "var(--ios-orange)", background: "rgba(255,149,0,0.14)" }}>
+              PENDING
+            </span>
+          </div>
+          <p className="mt-2 text-[15px] font-medium">
+            {pick.match.home.name} vs {pick.match.away.name}
+          </p>
+          <p className="mt-1 text-[13px] text-[var(--muted)]">
+            {pick.marketLabel} · {pick.match.league}
+          </p>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
+            Kickoff{" "}
+            {new Date(pick.match.kickoffUtc ?? pick.match.kickoff).toLocaleString(
+              "es-AU",
+              { timeZone: state.settings.timezone },
+            )}
+          </p>
+        </section>
+      )}
+
+      {last && state.pickStatus === "resolved" && (
         <section className="ios-card p-4">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[13px] text-[var(--muted)]">Última liquidación</p>
-            <span className="pill pill-auto">SIM</span>
+            <span className="pill pill-auto">REAL</span>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <span
@@ -102,14 +137,11 @@ export default function HomePage() {
           <p className="mt-2 text-[13px] text-[var(--muted)]">
             {formatBetWhen(last.hourKey, last.at, state.settings.timezone)}
           </p>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">
-            Partido ficticio generado por el motor — no es un fixture real.
-          </p>
         </section>
       )}
 
       <Link href="/pick" className="btn btn-primary w-full">
-        Ver pick de la hora
+        Ver pick
       </Link>
     </div>
   );

@@ -41,7 +41,8 @@ export default function MotorPage() {
         <p className="section-label !normal-case !tracking-normal">Lab</p>
         <h1 className="large-title">Motor</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Solo mercados grind con confianza ≥ 86%. Un pick automático por hora.
+          Solo mercados grind sobre fixtures ESPN. Sin partidos inventados. Se
+          liquida con el marcador real.
         </p>
       </header>
 

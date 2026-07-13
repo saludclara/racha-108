@@ -3,7 +3,7 @@
 import { useApp } from "@/lib/store";
 
 export default function SettingsPage() {
-  const { state, ready, updateSettings, resetAll, runNextHour } = useApp();
+  const { state, ready, updateSettings, resetAll, refreshNow } = useApp();
   if (!ready) return null;
 
   const s = state.settings;
@@ -13,6 +13,9 @@ export default function SettingsPage() {
       <header className="pt-3">
         <p className="section-label !normal-case !tracking-normal">Config</p>
         <h1 className="large-title">Ajustes</h1>
+        <p className="mt-1 text-[15px] text-[var(--muted)]">
+          Fuente: ESPN scoreboards (partidos reales). Sin simulación.
+        </p>
       </header>
 
       <div className="ios-inset divide-y divide-[var(--line)]">
@@ -78,24 +81,20 @@ export default function SettingsPage() {
       </div>
 
       <div className="flex flex-col gap-3">
-        <button type="button" className="btn btn-ghost" onClick={runNextHour}>
-          Simular siguiente hora
+        <button type="button" className="btn btn-ghost" onClick={refreshNow}>
+          Reconsultar partidos reales
         </button>
         <button
           type="button"
           className="btn btn-ghost"
           style={{ color: "var(--ios-red)" }}
           onClick={() => {
-            if (confirm("¿Resetear toda la simulación?")) resetAll();
+            if (confirm("¿Resetear toda la simulación de bankroll?")) resetAll();
           }}
         >
-          Reset total
+          Reset bankroll
         </button>
       </div>
-
-      <p className="text-[12px] text-[var(--muted)]">
-        Todo es ficticio. El pick de cada hora se ejecuta solo.
-      </p>
     </div>
   );
 }

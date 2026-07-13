@@ -5,4 +5,5 @@ export * from "./markets";
 export * from "./schedule";
 export * from "./model";
 export * from "./score";
+export * from "./settle";
 

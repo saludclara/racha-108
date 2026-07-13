@@ -1,12 +1,15 @@
 # Racha 108
 
-Web app de **apuestas ficticias** (sin dinero real), optimizada para iPhone y desktop.
+Web app de **apuestas ficticias en dinero** (bankroll simulado) sobre **partidos reales** vía ESPN scoreboards.
 
-- 1 pick/hora a stake base **11.11 AUD**
+- 1 pick/hora · stake base **11.11 AUD**
 - Objetivo: **108** aciertos seguidos
-- **HotStack** compounds; **Vault** aparta profit y nunca se apuesta
-- Motor multi-capa: fútbol + stats + valor + numerología + estrellas
-- Datos **simulados** (seed por hora)
+- HotStack / Vault
+- Liquidación con **marcador real** (no RNG)
+
+## Datos
+
+Fuente: `site.api.espn.com` (fixtures + forma + resultados). No se inventan equipos ni partidos.
 
 ## Desarrollo
 
@@ -15,12 +18,6 @@ npm install
 npm run dev
 ```
 
-Abrí [http://localhost:3000](http://localhost:3000).
+## Deploy
 
-## Stack
-
-Next.js App Router · TypeScript · Tailwind · localStorage
-
-## Notas
-
-Numerología y astrología son capas simbólicas/lúdicas con peso bajo. El gate real es probabilidad + estadísticas + valor.
+Push a `main` → Vercel. Endpoint: `/api/hourly`
