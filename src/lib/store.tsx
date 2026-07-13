@@ -13,7 +13,6 @@ import {
 import { generateSimMatches } from "@/lib/data/sim";
 import {
   applyLoss,
-  applySkip,
   applyWin,
   createInitialState,
   effectiveThreshold,
@@ -25,7 +24,7 @@ import {
   type AppState,
 } from "@/lib/engine";
 
-const STORAGE_KEY = "racha-108-state-v2";
+const STORAGE_KEY = "racha-108-state-v3";
 
 type AppContextValue = {
   state: AppState;
@@ -34,7 +33,6 @@ type AppContextValue = {
   tiltActive: boolean;
   updateSettings: (patch: Partial<AppSettings>) => void;
   resetAll: () => void;
-  /** Advance one simulated hour and auto-settle (demo / catch-up) */
   runNextHour: () => void;
 };
 
@@ -43,14 +41,27 @@ const AppContext = createContext<AppContextValue | null>(null);
 function loadState(): AppState {
   if (typeof window === "undefined") return createInitialState();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    // Prefer v3; migrate/clear stuck v2 skips
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ??
+      localStorage.getItem("racha-108-state-v2");
     if (!raw) return createInitialState();
     const parsed = JSON.parse(raw) as AppState;
-    return {
+    const base = {
       ...createInitialState(),
       ...parsed,
       settings: { ...createInitialState().settings, ...parsed.settings },
     };
+    // Don't carry over a stuck SKIP for the current hour
+    if (base.pickStatus === "skipped") {
+      return {
+        ...base,
+        pickStatus: "idle",
+        currentPick: null,
+        lastResolvedHourKey: null,
+      };
+    }
+    return base;
   } catch {
     return createInitialState();
   }
@@ -58,9 +69,13 @@ function loadState(): AppState {
 
 function saveState(state: AppState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.removeItem("racha-108-state-v2");
 }
 
-function settlePick(state: AppState, pick: NonNullable<AppState["currentPick"]>) {
+function settlePick(
+  state: AppState,
+  pick: NonNullable<AppState["currentPick"]>,
+) {
   if (state.goalReached) {
     return {
       ...state,
@@ -75,30 +90,22 @@ function settlePick(state: AppState, pick: NonNullable<AppState["currentPick"]>)
 }
 
 /**
- * Automatic hourly engine:
- * — if this hour already settled → idle wait
- * — else compute best high-accuracy pick and settle immediately
+ * Always produces and settles one pick for the hour. Never SKIP.
  */
 export function processHour(
   state: AppState,
   hourKey: string,
   now = new Date(),
 ): AppState {
-  if (state.lastResolvedHourKey === hourKey) {
-    return {
-      ...state,
-      currentHourKey: hourKey,
-      pickStatus:
-        state.pickStatus === "ready" ? "resolved" : state.pickStatus,
-    };
+  if (state.lastResolvedHourKey === hourKey && state.pickStatus === "resolved") {
+    return { ...state, currentHourKey: hourKey };
   }
 
-  if (
-    state.currentHourKey === hourKey &&
-    state.currentPick &&
-    state.pickStatus === "resolved"
-  ) {
-    return state;
+  // Re-run if previous attempt was a skip stuck in storage
+  if (state.lastResolvedHourKey === hourKey && state.pickStatus === "skipped") {
+    // fall through and re-settle
+  } else if (state.lastResolvedHourKey === hourKey) {
+    return { ...state, currentHourKey: hourKey };
   }
 
   const threshold = effectiveThreshold(
@@ -106,21 +113,13 @@ export function processHour(
     state.tiltGuardUntil,
     now,
   );
-  const matches = generateSimMatches(hourKey);
-  const pick = pickBestForHour(matches, hourKey, threshold, now);
 
-  if (!pick) {
-    return applySkip(
-      {
-        ...state,
-        currentHourKey: hourKey,
-        currentPick: null,
-        pickStatus: "idle",
-      },
-      hourKey,
-      `Sin mercado con confianza ≥ umbral. SKIP automático.`,
-      now,
-    );
+  let pick;
+  try {
+    const matches = generateSimMatches(hourKey);
+    pick = pickBestForHour(matches, hourKey, threshold, now);
+  } catch {
+    pick = pickBestForHour([], hourKey, threshold, now);
   }
 
   const withPick: AppState = {
@@ -128,13 +127,15 @@ export function processHour(
     currentHourKey: hourKey,
     currentPick: pick,
     pickStatus: "ready",
+    lastResolvedHourKey: null,
   };
 
   return settlePick(withPick, pick);
 }
 
 function nextHourKey(baseKey: string): string {
-  const [datePart, hourPart] = baseKey.split("T");
+  const clean = baseKey.split("-r")[0] ?? baseKey;
+  const [datePart, hourPart] = clean.split("T");
   const h = (Number(hourPart) + 1) % 24;
   return `${datePart}T${String(h).padStart(2, "0")}`;
 }
@@ -174,13 +175,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, didLoad]);
 
-  // Tick every second: when the wall-clock hour flips, auto-settle next pick
   useEffect(() => {
     if (!didLoad) return;
     const id = setInterval(() => {
       setState((s) => {
         const hourKey = hourKeyFor(new Date(), s.settings.timezone);
-        if (s.lastResolvedHourKey === hourKey) return s;
+        if (s.lastResolvedHourKey === hourKey && s.pickStatus === "resolved") {
+          return s;
+        }
         return processHour(s, hourKey);
       });
     }, 1000);
@@ -202,6 +204,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem("racha-108-state-v2");
     const fresh = createInitialState();
     const hourKey = hourKeyFor(new Date(), fresh.settings.timezone);
     setState(processHour(fresh, hourKey));
@@ -209,16 +213,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const runNextHour = useCallback(() => {
     setState((s) => {
-      const base =
-        s.currentHourKey ?? hourKeyFor(new Date(), s.settings.timezone);
-      const fakeKey = nextHourKey(base);
-      // Allow re-settling a synthetic hour for demo catch-up
-      const cleared: AppState = {
-        ...s,
-        lastResolvedHourKey:
-          s.lastResolvedHourKey === fakeKey ? null : s.lastResolvedHourKey,
-      };
-      return processHour(cleared, fakeKey);
+      try {
+        const base =
+          s.currentHourKey ?? hourKeyFor(new Date(), s.settings.timezone);
+
+        // If stuck on skip for this hour, re-settle the same hour first
+        if (s.pickStatus === "skipped") {
+          const cleared: AppState = {
+            ...s,
+            pickStatus: "idle",
+            currentPick: null,
+            lastResolvedHourKey: null,
+          };
+          return processHour(cleared, base);
+        }
+
+        const fakeKey = nextHourKey(base);
+        const cleared: AppState = {
+          ...s,
+          pickStatus: "idle",
+          currentPick: null,
+          lastResolvedHourKey: null,
+        };
+        return processHour(cleared, fakeKey);
+      } catch (err) {
+        console.error("runNextHour failed", err);
+        const hourKey = hourKeyFor(new Date(), s.settings.timezone);
+        return processHour(
+          {
+            ...s,
+            pickStatus: "idle",
+            currentPick: null,
+            lastResolvedHourKey: null,
+          },
+          `${hourKey}-recover`,
+        );
+      }
     });
   }, []);
 

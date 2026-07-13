@@ -3,4 +3,6 @@ export * from "./types";
 export * from "./bankroll";
 export * from "./markets";
 export * from "./schedule";
+export * from "./model";
 export * from "./score";
+

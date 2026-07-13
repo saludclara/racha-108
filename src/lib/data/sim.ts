@@ -1,4 +1,4 @@
-import { marketModelProb } from "@/lib/engine/score";
+import { fairOdds, marketModelProb } from "@/lib/engine/model";
 import type { MatchCandidate, MarketType, TeamStats } from "@/lib/engine/types";
 
 function team(name: string, overrides: Partial<TeamStats> = {}): TeamStats {
@@ -64,17 +64,6 @@ const AWAY_POOL = [
 
 const LEAGUES = ["A-League Sim", "NPL Elite Sim", "Pacific Cup Sim"];
 
-/** Odds slightly softer than true model prob → positive edge */
-function fairOdds(modelProb: number, soft = 0.025): number {
-  const implied = Math.min(0.96, Math.max(0.78, modelProb - soft));
-  const odds = 1 / implied;
-  return Math.round(Math.max(1.05, Math.min(1.22, odds)) * 100) / 100;
-}
-
-/**
- * Always includes a defensive lock so the hourly auto-pick can fire
- * with high Dixon-Coles confidence and calibrated positive edge.
- */
 export function generateSimMatches(hourKey: string): MatchCandidate[] {
   const rng = mulberry32(hashSeed(hourKey));
   const count = 5 + Math.floor(rng() * 2);
@@ -92,10 +81,10 @@ export function generateSimMatches(hourKey: string): MatchCandidate[] {
 
     const home = team(homeName, {
       attack: lock ? 0.95 + rng() * 0.12 : 0.9 + rng() * 0.55,
-      defense: lock ? 0.5 + rng() * 0.12 : 0.75 + rng() * 0.45,
+      defense: lock ? 0.48 + rng() * 0.1 : 0.75 + rng() * 0.45,
       form: lock ? [1, 1, 1, 1, 1] : [1, rng() > 0.4 ? 1 : 0.5, 1, 0.5, 1],
-      xgFor: lock ? 0.95 + rng() * 0.2 : 1.2 + rng() * 0.7,
-      xgAgainst: lock ? 0.4 + rng() * 0.15 : 0.85 + rng() * 0.5,
+      xgFor: lock ? 0.9 + rng() * 0.2 : 1.2 + rng() * 0.7,
+      xgAgainst: lock ? 0.38 + rng() * 0.12 : 0.85 + rng() * 0.5,
       shotsPerGame: lock ? 10 + rng() * 3 : 10 + rng() * 8,
       possession: lock ? 55 + rng() * 8 : 45 + rng() * 18,
       restDays: lock ? 6 + Math.floor(rng() * 2) : 3 + Math.floor(rng() * 4),
@@ -104,12 +93,12 @@ export function generateSimMatches(hourKey: string): MatchCandidate[] {
     });
 
     const away = team(awayName, {
-      attack: lock ? 0.45 + rng() * 0.15 : 0.75 + rng() * 0.45,
+      attack: lock ? 0.42 + rng() * 0.12 : 0.75 + rng() * 0.45,
       defense: lock ? 1.1 + rng() * 0.2 : 0.8 + rng() * 0.45,
       form: lock
         ? [0, 0.5, 0, 0.5, 0]
         : [0.5, rng() > 0.5 ? 1 : 0, 0.5, 0, 0.5],
-      xgFor: lock ? 0.45 + rng() * 0.2 : 0.95 + rng() * 0.55,
+      xgFor: lock ? 0.4 + rng() * 0.18 : 0.95 + rng() * 0.55,
       xgAgainst: lock ? 1.4 + rng() * 0.25 : 1.0 + rng() * 0.5,
       shotsPerGame: 7 + rng() * 5,
       possession: 38 + rng() * 14,
@@ -138,7 +127,7 @@ export function generateSimMatches(hourKey: string): MatchCandidate[] {
       const soft =
         lock &&
         (m === "under_35" || m === "double_chance_1x" || m === "btts_no")
-          ? 0.035
+          ? 0.04
           : 0.02;
       odds[m] = fairOdds(p, soft);
     }

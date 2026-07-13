@@ -11,11 +11,7 @@ export default function PickPage() {
 
   const pick = state.currentPick;
   const last = state.history[0];
-  const showPick =
-    pick &&
-    (state.pickStatus === "resolved" ||
-      state.pickStatus === "ready" ||
-      state.pickStatus === "placed");
+  const showPick = Boolean(pick) && state.pickStatus !== "skipped";
 
   return (
     <div className="rise space-y-5">
@@ -32,14 +28,17 @@ export default function PickPage() {
         </p>
       </header>
 
-      {state.pickStatus === "skipped" && (
+      {!showPick && (
         <div className="ios-card p-5">
-          <span className="pill pill-skip">SKIP</span>
-          <p className="mt-3 text-[15px] text-[var(--muted)]">
-            {last?.note ?? "Sin pick con confianza suficiente."}
+          <p className="text-[15px] text-[var(--muted)]">
+            Preparando pick automático…
           </p>
-          <button type="button" className="btn btn-ghost mt-4 w-full" onClick={runNextHour}>
-            Probar siguiente hora
+          <button
+            type="button"
+            className="btn btn-primary mt-4 w-full"
+            onClick={runNextHour}
+          >
+            Generar pick ahora
           </button>
         </div>
       )}
@@ -66,7 +65,10 @@ export default function PickPage() {
             <span className="text-[var(--muted)] font-normal">vs</span>{" "}
             {pick.match.away.name}
           </h2>
-          <p className="mt-2 text-[17px] font-semibold" style={{ color: "var(--ios-blue)" }}>
+          <p
+            className="mt-2 text-[17px] font-semibold"
+            style={{ color: "var(--ios-blue)" }}
+          >
             {pick.marketLabel}
           </p>
 
@@ -86,15 +88,16 @@ export default function PickPage() {
             ].map(([k, v]) => (
               <div key={k} className="rounded-xl bg-[var(--ios-fill-2)] p-3">
                 <p className="text-[11px] text-[var(--muted)]">{k}</p>
-                <p className="mt-0.5 text-[16px] font-semibold tracking-tight">{v}</p>
+                <p className="mt-0.5 text-[16px] font-semibold tracking-tight">
+                  {v}
+                </p>
               </div>
             ))}
           </div>
 
           {last?.outcome === "win" && (
             <p className="mt-3 text-[14px] text-[var(--muted)]">
-              Profit{" "}
-              <Money amount={last.profit ?? 0} /> · Vault +
+              Profit <Money amount={last.profit ?? 0} /> · Vault +
               <Money amount={last.vaultAdded ?? 0} />
             </p>
           )}
@@ -110,7 +113,7 @@ export default function PickPage() {
         </article>
       )}
 
-      <button type="button" className="btn btn-ghost w-full" onClick={runNextHour}>
+      <button type="button" className="btn btn-primary w-full" onClick={runNextHour}>
         Simular siguiente hora
       </button>
       <p className="text-center text-[12px] text-[var(--muted)]">
