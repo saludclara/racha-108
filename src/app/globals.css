@@ -187,7 +187,7 @@ a {
 }
 
 .ios-tabbar {
-  background: rgba(249, 249, 249, 0.86);
+  background: rgba(249, 249, 249, 0.92);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-top: 0.5px solid var(--ios-separator);
@@ -197,14 +197,17 @@ a {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 48px;
-  min-height: 44px;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
   justify-content: center;
+  padding: 6px 2px;
   color: var(--ios-secondary);
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: -0.01em;
+  line-height: 1.1;
 }
 
 .nav-link[data-active="true"] {
@@ -212,8 +215,18 @@ a {
 }
 
 .nav-icon {
-  font-size: 20px;
+  font-size: 26px;
   line-height: 1;
+  font-weight: 500;
+}
+
+.nav-label {
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .score-bar {
