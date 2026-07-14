@@ -27,8 +27,8 @@ export default function PickPage() {
         </div>
         <h1 className="large-title mt-1">Apuesta del ciclo</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Solo partidos que puedan cerrar pronto (live / casi-FT). Si no hay,
-          SKIP y HotStack libre · umbral {threshold} · {matchCount} en feed
+          1 pick por ciclo 1:11:11 (live primero, si no el mejor disponible) ·
+          umbral {threshold} · {matchCount} en feed
         </p>
         {apiMessage && (
           <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>

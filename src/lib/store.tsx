@@ -112,7 +112,7 @@ function applyApiResult(
     return applySkip(
       { ...state, currentHourKey: hourKey, currentPick: null },
       hourKey,
-      data.message ?? "SKIP · sin partidos liquidables en esta ventana.",
+      data.message ?? "Sin partidos reales en el feed este ciclo.",
     );
   }
 

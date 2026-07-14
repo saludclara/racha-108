@@ -41,9 +41,8 @@ export default function MotorPage() {
         <p className="section-label !normal-case !tracking-normal">Lab</p>
         <h1 className="large-title">Motor</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Solo mercados grind sobre fixtures liquidables en la ventana del ciclo
-          (live / casi-FT). Sin partidos lejanos que bloqueen el HotStack. Se
-          liquida con el marcador oficial.
+          Cada ciclo fuerza 1 pick real: prioriza live/casi-FT y si no amplía
+          la ventana. Sin partidos inventados. Liquidación con marcador oficial.
         </p>
       </header>
 

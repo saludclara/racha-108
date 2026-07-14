@@ -236,10 +236,12 @@ async function mapPool<T, R>(
 }
 
 async function loadEspnMatches(now: Date): Promise<MatchCandidate[]> {
-  // Current board + today UTC only — enough for live/settleable picks on serverless
-  const today = utcDateStamp(now);
+  // Current board + today + tomorrow (candidates for guaranteed cycle picks)
+  const dates = [0, 1].map((i) =>
+    utcDateStamp(new Date(now.getTime() + i * 86400000)),
+  );
   const jobs = ESPN_LEAGUES.flatMap((league) =>
-    [undefined, today].map((date) => ({ league, date })),
+    [undefined, ...dates].map((date) => ({ league, date })),
   );
 
   const seen = new Set<string>();

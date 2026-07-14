@@ -147,20 +147,22 @@ function buildScoredPick(
   market: MarketType,
   hourKey: string,
   now: Date,
-  opts: { strict: boolean },
+  opts: { strict: boolean; force?: boolean },
 ): ScoredPick | null {
   const odds = match.odds[market];
   if (odds == null || !isOddsInRange(odds)) return null;
 
   const modelProb = marketModelProb(market, match.home, match.away);
 
-  if (opts.strict) {
-    if (modelProb < MIN_MODEL_PROB) return null;
-    if (requiresExtremeFavorite(market) && modelProb < 0.8) return null;
-    if (market === "ah_home_m05" && modelProb < 0.86) return null;
-    if (market === "home_win" && modelProb < 0.78) return null;
-  } else if (modelProb < 0.7) {
-    return null;
+  if (!opts.force) {
+    if (opts.strict) {
+      if (modelProb < MIN_MODEL_PROB) return null;
+      if (requiresExtremeFavorite(market) && modelProb < 0.8) return null;
+      if (market === "ah_home_m05" && modelProb < 0.86) return null;
+      if (market === "home_win" && modelProb < 0.78) return null;
+    } else if (modelProb < 0.7) {
+      return null;
+    }
   }
 
   const layers: LayerScore[] = [
@@ -177,7 +179,7 @@ function buildScoredPick(
 
   const implied = 1 / odds;
   const edge = modelProb - implied;
-  if (opts.strict && edge < MIN_EDGE) return null;
+  if (!opts.force && opts.strict && edge < MIN_EDGE) return null;
 
   return {
     match,
@@ -212,19 +214,22 @@ function rankPicks(list: ScoredPick[]): ScoredPick[] {
 }
 
 /**
- * Best real-match grind pick. Returns null if no real candidates qualify.
- * Never invents fixtures.
+ * Best real-match grind pick.
+ * With `guarantee: true` (default for cycles), always returns a pick if any
+ * real match has grind odds — never invents fixtures.
  */
 export function pickBestForHour(
   matches: MatchCandidate[],
   hourKey: string,
   threshold: number,
   now = new Date(),
+  opts: { guarantee?: boolean } = { guarantee: true },
 ): ScoredPick | null {
   if (!matches.length) return null;
 
   const primary: ScoredPick[] = [];
   const soft: ScoredPick[] = [];
+  const forced: ScoredPick[] = [];
 
   for (const match of matches) {
     for (const market of ALLOWED_MARKETS) {
@@ -241,11 +246,22 @@ export function pickBestForHour(
       const loose = buildScoredPick(match, market, hourKey, now, {
         strict: false,
       });
-      if (loose) soft.push(loose);
+      if (loose) {
+        soft.push(loose);
+        continue;
+      }
+      if (opts.guarantee) {
+        const g = buildScoredPick(match, market, hourKey, now, {
+          strict: false,
+          force: true,
+        });
+        if (g) forced.push(g);
+      }
     }
   }
 
   if (primary.length) return rankPicks(primary)[0];
   if (soft.length) return rankPicks(soft)[0];
+  if (forced.length) return rankPicks(forced)[0];
   return null;
 }

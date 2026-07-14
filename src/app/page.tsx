@@ -40,8 +40,8 @@ export default function HomePage() {
         </div>
         <Countdown />
         <p className="mt-2 text-[13px] text-[var(--muted)]">
-          Solo picks liquidables pronto (live / casi-FT). Si no hay, SKIP y el
-          HotStack queda libre para el próximo ciclo.
+          Cada ciclo 1:11:11 hace 1 pick (prioriza live; si no, el mejor
+          partido real disponible). Se liquida con marcador oficial.
         </p>
         {apiMessage && (
           <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>

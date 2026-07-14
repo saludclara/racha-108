@@ -88,6 +88,41 @@ export function settleableForCycle(
   return [];
 }
 
+/**
+ * Prefer settleable (live), then expand kickoff windows.
+ * Every cycle should still get a real candidate when the feed has fixtures.
+ */
+export function candidatePoolForCycle(
+  candidates: MatchCandidate[],
+  now: Date,
+): { pool: MatchCandidate[]; tier: "settleable" | "near" | "day" | "wide" } {
+  const open = candidates.filter((m) => m.status !== "finished");
+  const settleable = settleableForCycle(open, now);
+  if (settleable.length) return { pool: settleable, tier: "settleable" };
+
+  const t = now.getTime();
+  const windows: { ms: number; tier: "near" | "day" | "wide" }[] = [
+    { ms: 6 * 3600_000, tier: "near" },
+    { ms: 24 * 3600_000, tier: "day" },
+    { ms: 72 * 3600_000, tier: "wide" },
+  ];
+
+  for (const { ms, tier } of windows) {
+    const filtered = open.filter((m) => {
+      if (m.status === "inplay") return true;
+      const kick = new Date(m.kickoffUtc ?? m.kickoff).getTime();
+      return (
+        Number.isFinite(kick) &&
+        kick >= t - 2 * 3600_000 &&
+        kick <= t + ms
+      );
+    });
+    if (filtered.length) return { pool: filtered, tier };
+  }
+
+  return { pool: open, tier: "wide" };
+}
+
 function findMatch(
   all: MatchCandidate[],
   pick: ScoredPick,
@@ -120,7 +155,7 @@ export async function buildHourlyPick(
   });
 
   const open = all.filter((m) => m.status !== "finished");
-  const pool = settleableForCycle(open, now);
+  const { pool, tier } = candidatePoolForCycle(open, now);
 
   if (!pool.length) {
     return {
@@ -133,13 +168,15 @@ export async function buildHourlyPick(
       sources,
       message:
         all.length === 0
-          ? "No se pudieron obtener partidos ahora. Revisá fuentes / keys free."
-          : "SKIP · sin partidos liquidables en esta ventana (live / casi-FT).",
+          ? "No se pudieron obtener partidos ahora. Reintentá en un minuto."
+          : "Sin fixtures abiertos en el feed (todos finalizados).",
       fetchedAt: now.toISOString(),
     };
   }
 
-  const pick = pickBestForHour(pool, hourKey, threshold, now);
+  const pick = pickBestForHour(pool, hourKey, threshold, now, {
+    guarantee: true,
+  });
 
   if (!pick) {
     return {
@@ -151,7 +188,7 @@ export async function buildHourlyPick(
       matchCount: pool.length,
       sources,
       message:
-        "SKIP · hay live/casi-FT, pero ninguno pasa el filtro de bajo riesgo.",
+        "Hay partidos, pero ninguno tiene mercado grind con cuotas válidas.",
       fetchedAt: now.toISOString(),
     };
   }
@@ -176,6 +213,15 @@ export async function buildHourlyPick(
     };
   }
 
+  const tierNote =
+    tier === "settleable"
+      ? "ventana liquidable"
+      : tier === "near"
+        ? "kickoff ≤6h"
+        : tier === "day"
+          ? "kickoff ≤24h"
+          : "mejor disponible";
+
   return {
     ok: true,
     hourKey,
@@ -184,7 +230,7 @@ export async function buildHourlyPick(
     settle: null,
     matchCount: pool.length,
     sources,
-    message: `Decisión del ciclo · HotStack a riesgo · ${fresh.status === "inplay" ? "en juego" : "kickoff"} ${new Date(fresh.kickoffUtc ?? fresh.kickoff).toLocaleString("es-AU")}`,
+    message: `Pick del ciclo · ${tierNote} · ${fresh.status === "inplay" ? "en juego" : "kickoff"} ${new Date(fresh.kickoffUtc ?? fresh.kickoff).toLocaleString("es-AU")}`,
     fetchedAt: now.toISOString(),
   };
 }
