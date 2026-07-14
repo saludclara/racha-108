@@ -20,12 +20,13 @@ export default function HomePage() {
   const progress = Math.min(100, (state.streak / STREAK_GOAL) * 100);
   const last = state.history[0];
   const pick = state.currentPick;
+  const hotAtRisk = state.pickStatus === "pending" && Boolean(pick);
 
   return (
     <div className="rise space-y-5 pb-4">
       <header className="pt-3">
         <p className="section-label !normal-case !tracking-normal">
-          Partidos reales · ESPN · 11.11 AUD · 1/hora
+          Partidos reales · multi-fuente free · 11.11 AUD · cada 1:11:11
         </p>
         <h1 className="large-title">
           Racha <span style={{ color: "var(--ios-blue)" }}>108</span>
@@ -34,13 +35,13 @@ export default function HomePage() {
 
       <section className="ios-card p-5">
         <div className="flex items-center justify-between">
-          <p className="text-[13px] text-[var(--muted)]">Próxima hora</p>
-          <span className="pill pill-auto">LIVE DATA</span>
+          <p className="text-[13px] text-[var(--muted)]">Próxima decisión</p>
+          <span className="pill pill-auto">1:11:11</span>
         </div>
         <Countdown />
         <p className="mt-2 text-[13px] text-[var(--muted)]">
-          Pick automático sobre fixtures reales. Se liquida con el marcador
-          oficial.
+          Solo picks liquidables pronto (live / casi-FT). Si no hay, SKIP y el
+          HotStack queda libre para el próximo ciclo.
         </p>
         {apiMessage && (
           <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>
@@ -53,7 +54,25 @@ export default function HomePage() {
 
         <div className="mt-5 grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-[var(--ios-fill-2)] p-3">
-            <p className="text-[12px] text-[var(--muted)]">HotStack</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[12px] text-[var(--muted)]">HotStack</p>
+              <span
+                className="pill"
+                style={
+                  hotAtRisk
+                    ? {
+                        color: "var(--ios-orange)",
+                        background: "rgba(255,149,0,0.14)",
+                      }
+                    : {
+                        color: "var(--ios-green)",
+                        background: "rgba(52,199,89,0.14)",
+                      }
+                }
+              >
+                {hotAtRisk ? "a riesgo" : "libre"}
+              </span>
+            </div>
             <p className="mt-0.5 text-[22px] font-semibold tracking-tight">
               <Money amount={state.hotStack} />
             </p>
@@ -121,13 +140,13 @@ export default function HomePage() {
         </Link>
       )}
 
-      {last && state.pickStatus === "resolved" && (
-        <section className="ios-card p-4">
+      {last && (
+        <Link
+          href="/racha"
+          className="ios-card block p-4 transition-opacity active:opacity-70"
+        >
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[13px] text-[var(--muted)]">Última liquidación</p>
-            <span className="pill pill-auto">REAL</span>
-          </div>
-          <div className="mt-2 flex items-center gap-2">
+            <p className="text-[13px] text-[var(--muted)]">Pick anterior</p>
             <span
               className={`pill ${
                 last.outcome === "win"
@@ -139,14 +158,21 @@ export default function HomePage() {
             >
               {last.outcome.toUpperCase()}
             </span>
-            <p className="text-[15px] font-medium leading-snug">
-              {last.matchLabel ?? last.note}
-            </p>
           </div>
-          <p className="mt-2 text-[13px] text-[var(--muted)]">
+          <p className="mt-2 text-[15px] font-medium leading-snug">
+            {last.matchLabel ?? last.note ?? "—"}
+          </p>
+          {(last.marketLabel || last.odds != null) && (
+            <p className="mt-1 text-[13px] text-[var(--muted)]">
+              {[last.marketLabel, last.odds != null ? `@ ${last.odds}` : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+          <p className="mt-1 text-[12px] text-[var(--muted)]">
             {formatBetWhen(last.hourKey, last.at, state.settings.timezone)}
           </p>
-        </section>
+        </Link>
       )}
 
       <Link href="/pick" className="btn btn-primary w-full">

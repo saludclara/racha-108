@@ -23,11 +23,12 @@ export default function PickPage() {
           <p className="section-label !mb-0 !normal-case !tracking-normal">
             Pick real
           </p>
-          <span className="pill pill-auto">ESPN</span>
+          <span className="pill pill-auto">REAL</span>
         </div>
-        <h1 className="large-title mt-1">Apuesta de la hora</h1>
+        <h1 className="large-title mt-1">Apuesta del ciclo</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Solo fixtures reales · umbral {threshold} · {matchCount} en feed
+          Solo partidos que puedan cerrar pronto (live / casi-FT). Si no hay,
+          SKIP y HotStack libre · umbral {threshold} · {matchCount} en feed
         </p>
         {apiMessage && (
           <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>
@@ -43,7 +44,7 @@ export default function PickPage() {
             {last?.note ?? apiMessage ?? "No hay mercado real elegible ahora."}
           </p>
           <button type="button" className="btn btn-primary mt-4 w-full" onClick={refreshNow}>
-            Reconsultar ESPN
+            Reconsultar feed
           </button>
         </div>
       )}
@@ -151,7 +152,7 @@ export default function PickPage() {
       )}
 
       <button type="button" className="btn btn-ghost w-full" onClick={refreshNow}>
-        Actualizar desde ESPN
+        Actualizar feed
       </button>
     </div>
   );

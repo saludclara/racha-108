@@ -32,6 +32,20 @@ export interface TeamStats {
   motivation: number;
 }
 
+export type SportCategory =
+  | "football"
+  | "basketball"
+  | "tennis"
+  | "mma"
+  | "hockey"
+  | "esports";
+
+export type DataProvider =
+  | "espn"
+  | "api-football"
+  | "odds-api"
+  | "pandascore";
+
 export interface MatchCandidate {
   id: string;
   kickoff: string;
@@ -46,7 +60,12 @@ export interface MatchCandidate {
   status?: "scheduled" | "inplay" | "finished";
   homeScore?: number;
   awayScore?: number;
-  provider?: "espn";
+  provider?: DataProvider;
+  sport?: SportCategory;
+  /** Stable key for cross-provider merge */
+  canonicalId?: string;
+  /** Extra provider ids for the same fixture */
+  providers?: Partial<Record<DataProvider, string>>;
 }
 
 export interface LayerScore {
@@ -100,6 +119,10 @@ export interface AppSettings {
   vaultSplitEarly: number;
   vaultSplitMid: number;
   vaultSplitLate: number;
+  /** Free optional sources (need env keys on server) */
+  enableApiFootball: boolean;
+  enableOddsApi: boolean;
+  enableEsports: boolean;
 }
 
 export interface AppState {
@@ -125,6 +148,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   vaultSplitEarly: 0.2,
   vaultSplitMid: 0.5,
   vaultSplitLate: 0.7,
+  enableApiFootball: true,
+  enableOddsApi: true,
+  enableEsports: true,
 };
 
 export function createInitialState(): AppState {

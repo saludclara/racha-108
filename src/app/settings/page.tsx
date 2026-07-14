@@ -3,10 +3,13 @@
 import { useApp } from "@/lib/store";
 
 export default function SettingsPage() {
-  const { state, ready, updateSettings, resetAll, refreshNow } = useApp();
+  const { state, ready, updateSettings, resetAll, refreshNow, sources, matchCount } =
+    useApp();
   if (!ready) return null;
 
   const s = state.settings;
+  const activeSources = sources.filter((x) => x.enabled && x.ok && x.count > 0);
+  const missingKeys = sources.filter((x) => x.enabled && !x.configured);
 
   return (
     <div className="rise space-y-5">
@@ -14,9 +17,111 @@ export default function SettingsPage() {
         <p className="section-label !normal-case !tracking-normal">Config</p>
         <h1 className="large-title">Ajustes</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Fuente: ESPN scoreboards (partidos reales). Sin simulación.
+          Feed multi-fuente free · {matchCount} fixtures en ventana.
+          {activeSources.length
+            ? ` Activas: ${activeSources.map((x) => x.label).join(", ")}.`
+            : " ESPN siempre disponible."}
         </p>
       </header>
+
+      <div className="ios-inset divide-y divide-[var(--line)]">
+        <div className="px-4 py-3">
+          <p className="text-[13px] text-[var(--muted)]">Fuentes free</p>
+          <p className="mt-1 text-[15px]">
+            ESPN siempre ON · sin API key
+          </p>
+        </div>
+
+        {(
+          [
+            [
+              "enableApiFootball",
+              "API-Football",
+              "100 req/día · más ligas + scores",
+              s.enableApiFootball,
+            ],
+            [
+              "enableOddsApi",
+              "The Odds API",
+              "Cuotas bookmaker reales (h2h / totals)",
+              s.enableOddsApi,
+            ],
+            [
+              "enableEsports",
+              "PandaScore esports",
+              "LoL / CS2 / Dota / Valorant fixtures",
+              s.enableEsports,
+            ],
+          ] as const
+        ).map(([key, title, hint, value]) => (
+          <label
+            key={key}
+            className="flex items-center justify-between gap-3 px-4 py-3"
+          >
+            <span>
+              <span className="block text-[15px]">{title}</span>
+              <span className="mt-0.5 block text-[13px] text-[var(--muted)]">
+                {hint}
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-[var(--ios-blue)]"
+              checked={value}
+              onChange={(e) => updateSettings({ [key]: e.target.checked })}
+            />
+          </label>
+        ))}
+
+        {sources.length > 0 && (
+          <div className="space-y-2 px-4 py-3">
+            <p className="text-[13px] text-[var(--muted)]">Estado del feed</p>
+            {sources.map((src) => (
+              <div
+                key={src.id}
+                className="flex items-baseline justify-between gap-2 text-[14px]"
+              >
+                <span>
+                  {src.label}
+                  {!src.configured && src.enabled ? (
+                    <span className="text-[var(--muted)]"> · sin key</span>
+                  ) : null}
+                  {src.error ? (
+                    <span style={{ color: "var(--ios-orange)" }}>
+                      {" "}
+                      · {src.error}
+                    </span>
+                  ) : null}
+                </span>
+                <span
+                  style={{
+                    color: !src.enabled
+                      ? "var(--muted)"
+                      : src.ok
+                        ? "var(--ios-green)"
+                        : "var(--ios-orange)",
+                  }}
+                >
+                  {!src.enabled
+                    ? "OFF"
+                    : src.ok
+                      ? `${src.count}`
+                      : "error"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {missingKeys.length > 0 && (
+          <p className="px-4 py-3 text-[13px] text-[var(--muted)]">
+            Keys opcionales en Vercel / `.env.local`:{" "}
+            <code className="text-[12px]">API_FOOTBALL_KEY</code>,{" "}
+            <code className="text-[12px]">ODDS_API_KEY</code>,{" "}
+            <code className="text-[12px]">PANDASCORE_TOKEN</code>
+          </p>
+        )}
+      </div>
 
       <div className="ios-inset divide-y divide-[var(--line)]">
         <label className="block px-4 py-3">

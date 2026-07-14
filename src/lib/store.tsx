@@ -19,11 +19,13 @@ import {
   effectiveThreshold,
   hourKeyFor,
   isTiltActive,
+  msUntilNextHour,
   type AppSettings,
   type AppState,
   type ScoredPick,
 } from "@/lib/engine";
 import type { HourlyPickResponse } from "@/lib/data/real";
+import type { SourceStatus } from "@/lib/data/providers/types";
 
 const STORAGE_KEY = "racha-108-state-v4-real";
 
@@ -34,6 +36,7 @@ type AppContextValue = {
   tiltActive: boolean;
   apiMessage: string | null;
   matchCount: number;
+  sources: SourceStatus[];
   updateSettings: (patch: Partial<AppSettings>) => void;
   resetAll: () => void;
   refreshNow: () => void;
@@ -64,22 +67,35 @@ function saveState(state: AppState) {
 async function fetchHourly(
   hourKey: string,
   threshold: number,
+  settings: AppSettings,
 ): Promise<HourlyPickResponse> {
-  const res = await fetch(
-    `/api/hourly?hourKey=${encodeURIComponent(hourKey)}&threshold=${threshold}`,
-    { cache: "no-store" },
-  );
+  const qs = new URLSearchParams({
+    hourKey,
+    threshold: String(threshold),
+    apiFootball: settings.enableApiFootball ? "1" : "0",
+    oddsApi: settings.enableOddsApi ? "1" : "0",
+    esports: settings.enableEsports ? "1" : "0",
+  });
+  const res = await fetch(`/api/hourly?${qs}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`API ${res.status}`);
   }
   return (await res.json()) as HourlyPickResponse;
 }
 
-async function fetchRefresh(pick: ScoredPick): Promise<HourlyPickResponse> {
+async function fetchRefresh(
+  pick: ScoredPick,
+  settings: AppSettings,
+): Promise<HourlyPickResponse> {
   const res = await fetch("/api/hourly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pick }),
+    body: JSON.stringify({
+      pick,
+      apiFootball: settings.enableApiFootball,
+      oddsApi: settings.enableOddsApi,
+      esports: settings.enableEsports,
+    }),
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`API ${res.status}`);
@@ -96,7 +112,7 @@ function applyApiResult(
     return applySkip(
       { ...state, currentHourKey: hourKey, currentPick: null },
       hourKey,
-      data.message ?? "Sin partidos reales elegibles esta hora.",
+      data.message ?? "SKIP · sin partidos liquidables en esta ventana.",
     );
   }
 
@@ -109,7 +125,6 @@ function applyApiResult(
     };
   }
 
-  // settled
   if (state.lastResolvedHourKey === hourKey && state.pickStatus === "resolved") {
     return {
       ...state,
@@ -160,6 +175,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [didLoad, setDidLoad] = useState(false);
   const [apiMessage, setApiMessage] = useState<string | null>(null);
   const [matchCount, setMatchCount] = useState(0);
+  const [sources, setSources] = useState<SourceStatus[]>([]);
   const [tick, setTick] = useState(0);
 
   const threshold = useMemo(
@@ -179,41 +195,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saveState(state);
   }, [state, didLoad]);
 
-  // Fetch / refresh real ESPN pick
+  // One decision per 1:11:11 cycle
   useEffect(() => {
     if (!didLoad) return;
     let cancelled = false;
 
     (async () => {
-      const hourKey = hourKeyFor(new Date(), state.settings.timezone);
+      const cycleKey = hourKeyFor(new Date(), state.settings.timezone);
+
       try {
         let data: HourlyPickResponse;
 
-        if (
-          state.pickStatus === "pending" &&
-          state.currentPick &&
-          state.currentHourKey === hourKey
-        ) {
-          data = await fetchRefresh(state.currentPick);
+        if (state.pickStatus === "pending" && state.currentPick) {
+          // Hold across cycles until official FT — never void for rollover
+          data = await fetchRefresh(state.currentPick, state.settings);
+          if (cancelled) return;
+          setMatchCount(data.matchCount);
+          if (data.sources) setSources(data.sources);
+
+          if (data.status === "pending") {
+            setApiMessage(
+              data.message ??
+                "Esperando resultado · HotStack a riesgo",
+            );
+            setState((s) =>
+              applyApiResult(s, s.currentHourKey ?? cycleKey, data),
+            );
+            return;
+          }
+
+          // Settled → book it
+          const pickCycle = state.currentHourKey ?? data.hourKey;
+          setState((s) => applyApiResult(s, pickCycle, data));
+          if (cancelled) return;
+
+          if (pickCycle === cycleKey) {
+            setApiMessage(
+              data.message ??
+                "Liquidado con marcador real · HotStack listo",
+            );
+            return;
+          }
+
+          // Slot freed in a later cycle → decide current cycle (settleable only)
+          data = await fetchHourly(cycleKey, threshold, state.settings);
         } else if (
-          state.lastResolvedHourKey === hourKey &&
-          state.pickStatus === "resolved"
+          state.lastResolvedHourKey === cycleKey &&
+          (state.pickStatus === "resolved" || state.pickStatus === "skipped")
         ) {
-          setApiMessage("Pick de esta hora ya liquidado con resultado real.");
+          setApiMessage(
+            "Ciclo libre · HotStack listo · próxima decisión en el countdown.",
+          );
           return;
         } else {
-          data = await fetchHourly(hourKey, threshold);
+          // No open pick → decide this cycle (or SKIP if nothing settleable)
+          data = await fetchHourly(cycleKey, threshold, state.settings);
         }
 
         if (cancelled) return;
         setApiMessage(data.message ?? null);
         setMatchCount(data.matchCount);
-        setState((s) => applyApiResult(s, hourKey, data));
+        if (data.sources) setSources(data.sources);
+        setState((s) => applyApiResult(s, cycleKey, data));
       } catch (err) {
         if (cancelled) return;
         console.error(err);
         setApiMessage(
-          "Error consultando partidos reales (ESPN). Reintentando…",
+          "Error consultando el feed de partidos reales. Reintentando…",
         );
       }
     })();
@@ -221,23 +269,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional refresh drivers
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cycle drivers
   }, [
     didLoad,
     tick,
     state.settings.timezone,
+    state.settings.enableApiFootball,
+    state.settings.enableOddsApi,
+    state.settings.enableEsports,
     threshold,
     state.pickStatus,
     state.currentHourKey,
     state.lastResolvedHourKey,
   ]);
 
-  // Poll while pending; also detect hour flip
+  // Hit each 1:11:11 boundary + settle polls
   useEffect(() => {
     if (!didLoad) return;
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
-    return () => clearInterval(id);
-  }, [didLoad]);
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const arm = () => {
+      const ms = msUntilNextHour(new Date(), state.settings.timezone);
+      const delay = Math.max(250, Math.min(ms + 120, 15_000));
+      timeoutId = setTimeout(() => {
+        setTick((t) => t + 1);
+        arm();
+      }, delay);
+    };
+
+    arm();
+    return () => clearTimeout(timeoutId);
+  }, [didLoad, state.settings.timezone]);
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setState((s) => ({
@@ -265,6 +327,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tiltActive,
     apiMessage,
     matchCount,
+    sources,
     updateSettings,
     resetAll,
     refreshNow,

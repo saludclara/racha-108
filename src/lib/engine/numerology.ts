@@ -88,8 +88,14 @@ export function lifePathNumber(date: Date): number {
 }
 
 export function hourVibration(hourKey: string): number {
-  const hourPart = hourKey.split("T")[1]?.split("-")[0] ?? "0";
-  return digitSum(Number(hourPart) + 11);
+  // Prefer cycle index (-cN); else HH:MM:SS digits; else legacy hour
+  const cycleMatch = hourKey.match(/-c(\d+)$/);
+  if (cycleMatch) {
+    return digitSum(Number(cycleMatch[1]) + 11);
+  }
+  const timePart = hourKey.split("T")[1]?.split("-")[0] ?? "0";
+  const digits = timePart.replace(/\D/g, "");
+  return digitSum(Number(digits || "0") + 11);
 }
 
 function marketArcanaFit(

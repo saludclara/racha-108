@@ -1,0 +1,319 @@
+import { CACHE_TTL, withCache } from "@/lib/data/cache";
+import { canonicalIdFor } from "@/lib/data/merge";
+import { buildModelOdds, proxyTeamStats } from "@/lib/data/odds-model";
+import type { MatchCandidate, TeamStats } from "@/lib/engine/types";
+import type { MatchProvider, ProviderResult } from "./types";
+
+const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
+
+/** Expanded free ESPN soccer coverage (no API key). */
+export const ESPN_LEAGUES: { slug: string; name: string }[] = [
+  // Americas
+  { slug: "usa.1", name: "MLS" },
+  { slug: "usa.2", name: "USL Championship" },
+  { slug: "mex.1", name: "Liga MX" },
+  { slug: "bra.1", name: "Brasileirão" },
+  { slug: "bra.2", name: "Brasileirão Série B" },
+  { slug: "arg.1", name: "Liga Profesional" },
+  { slug: "chi.1", name: "Primera División Chile" },
+  { slug: "col.1", name: "Liga BetPlay" },
+  { slug: "per.1", name: "Liga 1 Perú" },
+  { slug: "uru.1", name: "Primera División Uruguay" },
+  { slug: "ecu.1", name: "LigaPro" },
+  { slug: "par.1", name: "Primera División Paraguay" },
+  { slug: "conmebol.libertadores", name: "Copa Libertadores" },
+  { slug: "conmebol.sudamericana", name: "Copa Sudamericana" },
+  { slug: "concacaf.leagues.cup", name: "Leagues Cup" },
+  { slug: "concacaf.champions.cup", name: "Concacaf Champions Cup" },
+  // Europe tops + cups
+  { slug: "eng.1", name: "Premier League" },
+  { slug: "eng.2", name: "Championship" },
+  { slug: "eng.3", name: "League One" },
+  { slug: "eng.fa", name: "FA Cup" },
+  { slug: "eng.league_cup", name: "EFL Cup" },
+  { slug: "esp.1", name: "LaLiga" },
+  { slug: "esp.2", name: "LaLiga 2" },
+  { slug: "ger.1", name: "Bundesliga" },
+  { slug: "ger.2", name: "2. Bundesliga" },
+  { slug: "ita.1", name: "Serie A" },
+  { slug: "ita.2", name: "Serie B" },
+  { slug: "fra.1", name: "Ligue 1" },
+  { slug: "fra.2", name: "Ligue 2" },
+  { slug: "ned.1", name: "Eredivisie" },
+  { slug: "por.1", name: "Primeira Liga" },
+  { slug: "bel.1", name: "Pro League" },
+  { slug: "sco.1", name: "Scottish Premiership" },
+  { slug: "tur.1", name: "Süper Lig" },
+  { slug: "gre.1", name: "Super League Greece" },
+  { slug: "aut.1", name: "Bundesliga AT" },
+  { slug: "sui.1", name: "Super League CH" },
+  { slug: "rus.1", name: "Russian Premier League" },
+  { slug: "ukr.1", name: "Ukrainian Premier League" },
+  { slug: "cze.1", name: "Czech First League" },
+  { slug: "pol.1", name: "Ekstraklasa" },
+  { slug: "rou.1", name: "Liga 1 Romania" },
+  { slug: "cro.1", name: "HNL" },
+  { slug: "srb.1", name: "SuperLiga Serbia" },
+  { slug: "uefa.champions", name: "Champions League" },
+  { slug: "uefa.europa", name: "Europa League" },
+  { slug: "uefa.europa.conf", name: "Conference League" },
+  { slug: "uefa.nations", name: "UEFA Nations League" },
+  // Nordic / summer
+  { slug: "nor.1", name: "Eliteserien" },
+  { slug: "swe.1", name: "Allsvenskan" },
+  { slug: "den.1", name: "Superliga" },
+  { slug: "fin.1", name: "Veikkausliiga" },
+  { slug: "isl.1", name: "Besta deildin" },
+  // Asia / Oceania / Africa
+  { slug: "jpn.1", name: "J1 League" },
+  { slug: "jpn.2", name: "J2 League" },
+  { slug: "kor.1", name: "K League 1" },
+  { slug: "aus.1", name: "A-League" },
+  { slug: "chn.1", name: "Chinese Super League" },
+  { slug: "sau.1", name: "Saudi Pro League" },
+  { slug: "uae.1", name: "UAE Pro League" },
+  { slug: "qat.1", name: "Stars League" },
+  { slug: "ind.1", name: "Indian Super League" },
+  { slug: "afc.champions", name: "AFC Champions League" },
+  { slug: "rsa.1", name: "Premier Soccer League" },
+  { slug: "egy.1", name: "Egyptian Premier League" },
+];
+
+type EspnCompetitor = {
+  homeAway: "home" | "away";
+  score?: string;
+  form?: string;
+  records?: { type?: string; name?: string; summary?: string }[];
+  team: { id?: string; displayName: string };
+};
+
+type EspnEvent = {
+  id: string;
+  date: string;
+  status?: {
+    type?: {
+      state?: string;
+      completed?: boolean;
+    };
+  };
+  competitions?: {
+    competitors?: EspnCompetitor[];
+    odds?: { details?: string; overUnder?: number; spread?: number }[];
+  }[];
+};
+
+function utcDateStamp(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
+}
+
+function formToArray(form?: string): number[] {
+  if (!form) return [0.5, 0.5, 0.5, 0.5, 0.5];
+  return form
+    .slice(-5)
+    .split("")
+    .map((c) => (c === "W" ? 1 : c === "D" ? 0.5 : 0));
+}
+
+function parseRecord(summary?: string): { w: number; d: number; l: number } {
+  if (!summary) return { w: 0, d: 0, l: 0 };
+  const parts = summary.split("-").map((x) => Number(x));
+  if (parts.length >= 3 && parts.every((n) => Number.isFinite(n))) {
+    return { w: parts[0], d: parts[1], l: parts[2] };
+  }
+  return { w: 0, d: 0, l: 0 };
+}
+
+function statsFromCompetitor(c: EspnCompetitor): TeamStats {
+  const rec = parseRecord(
+    c.records?.find((r) => r.type === "total" || r.name)?.summary ??
+      c.records?.[0]?.summary,
+  );
+  const played = Math.max(1, rec.w + rec.d + rec.l);
+  const winRate = rec.w / played;
+  return proxyTeamStats(c.team.displayName, {
+    form: formToArray(c.form),
+    winRate,
+  });
+}
+
+function mapStatus(
+  state?: string,
+  completed?: boolean,
+): MatchCandidate["status"] {
+  if (completed || state === "post") return "finished";
+  if (state === "in") return "inplay";
+  return "scheduled";
+}
+
+function eventToCandidate(
+  event: EspnEvent,
+  leagueName: string,
+): MatchCandidate | null {
+  const competitors = event.competitions?.[0]?.competitors;
+  if (!competitors || competitors.length < 2) return null;
+  const homeC = competitors.find((c) => c.homeAway === "home");
+  const awayC = competitors.find((c) => c.homeAway === "away");
+  if (!homeC || !awayC) return null;
+
+  const home = statsFromCompetitor(homeC);
+  const away = statsFromCompetitor(awayC);
+  const status = mapStatus(
+    event.status?.type?.state,
+    event.status?.type?.completed,
+  );
+  const homeScore =
+    homeC.score != null && homeC.score !== ""
+      ? Number(homeC.score)
+      : undefined;
+  const awayScore =
+    awayC.score != null && awayC.score !== ""
+      ? Number(awayC.score)
+      : undefined;
+
+  const kickoff = new Date(event.date);
+  const match: MatchCandidate = {
+    id: `espn-${event.id}`,
+    externalId: event.id,
+    kickoff: event.date,
+    kickoffUtc: event.date,
+    league: leagueName,
+    home,
+    away,
+    odds: buildModelOdds(home, away),
+    matchday: kickoff.getUTCDate(),
+    status,
+    homeScore: Number.isFinite(homeScore) ? homeScore : undefined,
+    awayScore: Number.isFinite(awayScore) ? awayScore : undefined,
+    provider: "espn",
+    sport: "football",
+    providers: { espn: event.id },
+  };
+  match.canonicalId = canonicalIdFor(match);
+  return match;
+}
+
+async function fetchScoreboard(
+  slug: string,
+  dates?: string,
+): Promise<EspnEvent[]> {
+  const url = dates
+    ? `${ESPN_BASE}/${slug}/scoreboard?dates=${dates}`
+    : `${ESPN_BASE}/${slug}/scoreboard`;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "racha-108/1.0" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as { events?: EspnEvent[] };
+    return json.events ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Run async tasks with a concurrency cap (Vercel-friendly). */
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const n = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
+}
+
+async function loadEspnMatches(now: Date): Promise<MatchCandidate[]> {
+  // Current board + today UTC only — enough for live/settleable picks on serverless
+  const today = utcDateStamp(now);
+  const jobs = ESPN_LEAGUES.flatMap((league) =>
+    [undefined, today].map((date) => ({ league, date })),
+  );
+
+  const seen = new Set<string>();
+  const out: MatchCandidate[] = [];
+
+  const batches = await mapPool(jobs, 12, async ({ league, date }) => {
+    try {
+      return await fetchScoreboard(league.slug, date);
+    } catch {
+      return [] as EspnEvent[];
+    }
+  });
+
+  for (let i = 0; i < jobs.length; i++) {
+    const events = batches[i] ?? [];
+    const leagueName = jobs[i].league.name;
+    for (const ev of events) {
+      const m = eventToCandidate(ev, leagueName);
+      if (!m || seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push(m);
+    }
+  }
+
+  return out.sort(
+    (a, b) =>
+      new Date(a.kickoffUtc ?? a.kickoff).getTime() -
+      new Date(b.kickoffUtc ?? b.kickoff).getTime(),
+  );
+}
+
+export const espnProvider: MatchProvider = {
+  id: "espn",
+  label: "ESPN",
+  isConfigured: () => true,
+  async fetch({ now = new Date() }): Promise<ProviderResult> {
+    try {
+      const matches = await withCache(
+        `espn:${utcDateStamp(now)}`,
+        CACHE_TTL.espn,
+        () => loadEspnMatches(now),
+      );
+      return {
+        matches,
+        status: {
+          id: "espn",
+          label: "ESPN",
+          enabled: true,
+          configured: true,
+          ok: true,
+          count: matches.length,
+        },
+      };
+    } catch (err) {
+      return {
+        matches: [],
+        status: {
+          id: "espn",
+          label: "ESPN",
+          enabled: true,
+          configured: true,
+          ok: false,
+          count: 0,
+          error: err instanceof Error ? err.message : "ESPN fetch failed",
+        },
+      };
+    }
+  },
+};
+
+/** Back-compat helper used by older imports. */
+export async function fetchEspnMatches(
+  now = new Date(),
+): Promise<MatchCandidate[]> {
+  const { matches } = await espnProvider.fetch({ now });
+  return matches;
+}

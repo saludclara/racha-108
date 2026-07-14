@@ -1,12 +1,32 @@
 import { DEFAULT_TIMEZONE } from "./types";
 
-export function hourKeyFor(date: Date, timeZone = DEFAULT_TIMEZONE): string {
+/** One pick every 1h 11m 11s — mirrors the 11.11 stake theme. */
+export const CYCLE_MS = (1 * 3600 + 11 * 60 + 11) * 1000; // 4_271_000
+
+/** Fixed UTC epoch so cycle boundaries are stable across reloads. */
+export const CYCLE_EPOCH_UTC = Date.UTC(2024, 0, 1, 0, 0, 11);
+
+export function cycleIndex(date: Date): number {
+  return Math.floor((date.getTime() - CYCLE_EPOCH_UTC) / CYCLE_MS);
+}
+
+export function cycleStart(index: number): Date {
+  return new Date(CYCLE_EPOCH_UTC + index * CYCLE_MS);
+}
+
+export function cycleEnd(index: number): Date {
+  return new Date(CYCLE_EPOCH_UTC + (index + 1) * CYCLE_MS);
+}
+
+function wallParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   }).formatToParts(date);
 
@@ -14,25 +34,32 @@ export function hourKeyFor(date: Date, timeZone = DEFAULT_TIMEZONE): string {
     parts.find((p) => p.type === type)?.value ?? "00";
 
   const hour = get("hour") === "24" ? "00" : get("hour");
-  return `${get("year")}-${get("month")}-${get("day")}T${hour}`;
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour,
+    minute: get("minute"),
+    second: get("second"),
+  };
+}
+
+/**
+ * Stable key for the current 1:11:11 cycle.
+ * Format: `YYYY-MM-DDTHH:MM:SS-c{index}` in the user's timezone (cycle start).
+ */
+export function hourKeyFor(date: Date, timeZone = DEFAULT_TIMEZONE): string {
+  const idx = cycleIndex(date);
+  const start = cycleStart(idx);
+  const p = wallParts(start, timeZone);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}-c${idx}`;
 }
 
 export function nextHourBoundary(
   date: Date,
-  timeZone = DEFAULT_TIMEZONE,
+  _timeZone = DEFAULT_TIMEZONE,
 ): Date {
-  // Approximate next hour in local wall time via iterative search
-  const currentKey = hourKeyFor(date, timeZone);
-  let cursor = new Date(date.getTime());
-  for (let i = 0; i < 120; i++) {
-    cursor = new Date(cursor.getTime() + 60_000);
-    if (hourKeyFor(cursor, timeZone) !== currentKey) {
-      // snap to start of that minute-ish; refine to second 0
-      cursor.setSeconds(0, 0);
-      return cursor;
-    }
-  }
-  return new Date(date.getTime() + 60 * 60 * 1000);
+  return cycleEnd(cycleIndex(date));
 }
 
 export function msUntilNextHour(
@@ -61,34 +88,55 @@ export function formatMoneyAUD(amount: number): string {
   }).format(amount);
 }
 
-/** Pretty label for hourKey `YYYY-MM-DDTHH` + optional ISO timestamp */
+/** Pretty label for cycle key + optional ISO timestamp */
 export function formatBetWhen(
   hourKey: string,
   atIso?: string,
   timeZone = DEFAULT_TIMEZONE,
 ): string {
   const clean = hourKey.split("-r")[0] ?? hourKey;
-  const [datePart, hourPart] = clean.split("T");
-  if (!datePart || hourPart == null) {
-    return atIso
-      ? new Date(atIso).toLocaleString("es-AU", { timeZone })
-      : hourKey;
+  const match = clean.match(
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:-c\d+)?$/,
+  );
+
+  if (!match) {
+    // Legacy wall-hour key `YYYY-MM-DDTHH`
+    const [datePart, hourPart] = clean.split("T");
+    if (!datePart || hourPart == null) {
+      return atIso
+        ? new Date(atIso).toLocaleString("es-AU", { timeZone })
+        : hourKey;
+    }
+    const hourLabel = `${hourPart.slice(0, 2).padStart(2, "0")}:00`;
+    const dateLabel = new Date(`${datePart}T12:00:00`).toLocaleDateString(
+      "es-AU",
+      { weekday: "short", day: "numeric", month: "short", timeZone },
+    );
+    if (atIso) {
+      const clock = new Date(atIso).toLocaleTimeString("es-AU", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone,
+      });
+      return `${dateLabel} · ciclo ${hourLabel} · liquidada ${clock}`;
+    }
+    return `${dateLabel} · ciclo ${hourLabel}`;
   }
-  const hourLabel = `${hourPart.padStart(2, "0")}:00`;
-  const dateLabel = new Date(`${datePart}T12:00:00`).toLocaleDateString("es-AU", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone,
-  });
+
+  const [, datePart, hh, mm, ss] = match;
+  const clockLabel = `${hh}:${mm}${ss ? `:${ss}` : ""}`;
+  const dateLabel = new Date(`${datePart}T12:00:00`).toLocaleDateString(
+    "es-AU",
+    { weekday: "short", day: "numeric", month: "short", timeZone },
+  );
+
   if (atIso) {
     const clock = new Date(atIso).toLocaleTimeString("es-AU", {
       hour: "2-digit",
       minute: "2-digit",
       timeZone,
     });
-    return `${dateLabel} · franja ${hourLabel} · liquidada ${clock}`;
+    return `${dateLabel} · ciclo ${clockLabel} · liquidada ${clock}`;
   }
-  return `${dateLabel} · franja ${hourLabel}`;
+  return `${dateLabel} · ciclo ${clockLabel}`;
 }
-
