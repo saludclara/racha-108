@@ -36,5 +36,6 @@ Push a `main` → Vercel auto-deploy.
   - `API_FOOTBALL_KEY`
   - `ODDS_API_KEY`
   - `PANDASCORE_TOKEN`
+  - `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (estado durable vía `?run=`)
 
-Endpoint: `/api/hourly` (serverless, `maxDuration` 60s)
+Endpoint: `/api/hourly` (serverless, `maxDuration` 60s) · `/api/run` (persistencia)

@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -28,10 +29,17 @@ import type { HourlyPickResponse } from "@/lib/data/real";
 import type { SourceStatus } from "@/lib/data/providers/types";
 
 const STORAGE_KEY = "racha-108-state-v4-real";
+const RUN_ID_KEY = "racha-108-run-id";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REMOTE_SAVE_DEBOUNCE_MS = 500;
 
 type AppContextValue = {
   state: AppState;
   ready: boolean;
+  runId: string | null;
+  shareUrl: string | null;
+  durableEnabled: boolean;
   threshold: number;
   tiltActive: boolean;
   apiMessage: string | null;
@@ -44,7 +52,7 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-function loadState(): AppState {
+function loadLocalState(): AppState {
   if (typeof window === "undefined") return createInitialState();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -60,8 +68,78 @@ function loadState(): AppState {
   }
 }
 
-function saveState(state: AppState) {
+function saveLocalState(state: AppState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function readStoredRunId(): string | null {
+  if (typeof window === "undefined") return null;
+  const fromUrl = new URLSearchParams(window.location.search).get("run")?.trim();
+  if (fromUrl && UUID_RE.test(fromUrl)) return fromUrl;
+  const fromLs = localStorage.getItem(RUN_ID_KEY)?.trim();
+  if (fromLs && UUID_RE.test(fromLs)) return fromLs;
+  return null;
+}
+
+function persistRunId(id: string) {
+  localStorage.setItem(RUN_ID_KEY, id);
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("run") !== id) {
+    url.searchParams.set("run", id);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
+function clearRunId() {
+  localStorage.removeItem(RUN_ID_KEY);
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("run")) {
+    url.searchParams.delete("run");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
+function buildShareUrl(runId: string): string {
+  if (typeof window === "undefined") return `?run=${runId}`;
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("run", runId);
+  return url.toString();
+}
+
+async function apiCreateRun(state: AppState): Promise<{ id: string; state: AppState } | null> {
+  const res = await fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state }),
+    cache: "no-store",
+  });
+  if (res.status === 503) return null;
+  if (!res.ok) throw new Error(`create run ${res.status}`);
+  return (await res.json()) as { id: string; state: AppState };
+}
+
+async function apiLoadRun(id: string): Promise<{ id: string; state: AppState } | null> {
+  const res = await fetch(`/api/run?id=${encodeURIComponent(id)}`, {
+    cache: "no-store",
+  });
+  if (res.status === 503) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`load run ${res.status}`);
+  return (await res.json()) as { id: string; state: AppState };
+}
+
+async function apiSaveRun(id: string, state: AppState): Promise<boolean> {
+  const res = await fetch("/api/run", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, state }),
+    cache: "no-store",
+  });
+  if (res.status === 503) return false;
+  if (!res.ok) throw new Error(`save run ${res.status}`);
+  return true;
 }
 
 async function fetchHourly(
@@ -173,10 +251,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [state, setState] = useState<AppState>(() => createInitialState());
   const [didLoad, setDidLoad] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [durableEnabled, setDurableEnabled] = useState(false);
   const [apiMessage, setApiMessage] = useState<string | null>(null);
   const [matchCount, setMatchCount] = useState(0);
   const [sources, setSources] = useState<SourceStatus[]>([]);
   const [tick, setTick] = useState(0);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const bootstrappedRef = useRef(false);
 
   const threshold = useMemo(
     () => effectiveThreshold(state.settings, state.tiltGuardUntil),
@@ -185,15 +268,88 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const tiltActive = isTiltActive(state.tiltGuardUntil);
 
-  if (hydrated && !didLoad) {
-    setDidLoad(true);
-    setState(loadState());
-  }
+  const shareUrl = useMemo(
+    () => (runId ? buildShareUrl(runId) : null),
+    [runId],
+  );
 
+  // Bootstrap: local cache → remote run (URL / stored id / create+migrate)
+  useEffect(() => {
+    if (!hydrated || bootstrappedRef.current) return;
+    bootstrappedRef.current = true;
+
+    let cancelled = false;
+
+    (async () => {
+      const local = loadLocalState();
+      const existingId = readStoredRunId();
+
+      try {
+        if (existingId) {
+          const remote = await apiLoadRun(existingId);
+          if (cancelled) return;
+          if (remote) {
+            persistRunId(remote.id);
+            runIdRef.current = remote.id;
+            setRunId(remote.id);
+            setDurableEnabled(true);
+            setState(remote.state);
+            saveLocalState(remote.state);
+            setDidLoad(true);
+            return;
+          }
+          // Stale id or 503 → keep local and try create if configured
+        }
+
+        const created = await apiCreateRun(local);
+        if (cancelled) return;
+        if (created) {
+          persistRunId(created.id);
+          runIdRef.current = created.id;
+          setRunId(created.id);
+          setDurableEnabled(true);
+          setState(created.state);
+          saveLocalState(created.state);
+        } else {
+          setDurableEnabled(false);
+          setState(local);
+          saveLocalState(local);
+        }
+      } catch (err) {
+        console.error(err);
+        if (cancelled) return;
+        setDurableEnabled(false);
+        setState(local);
+        saveLocalState(local);
+      } finally {
+        if (!cancelled) setDidLoad(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated]);
+
+  // Local + debounced remote persist
   useEffect(() => {
     if (!didLoad) return;
-    saveState(state);
-  }, [state, didLoad]);
+    saveLocalState(state);
+
+    const id = runIdRef.current;
+    if (!id || !durableEnabled) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      void apiSaveRun(id, state).catch((err) => {
+        console.error(err);
+      });
+    }, REMOTE_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [state, didLoad, durableEnabled]);
 
   // One decision per 1:11:11 cycle
   useEffect(() => {
@@ -309,11 +465,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem("racha-108-state-v3");
-    localStorage.removeItem("racha-108-state-v2");
-    setState(createInitialState());
-    setTick((t) => t + 1);
+    void (async () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem("racha-108-state-v3");
+      localStorage.removeItem("racha-108-state-v2");
+      clearRunId();
+      runIdRef.current = null;
+      setRunId(null);
+
+      const fresh = createInitialState();
+      setState(fresh);
+      saveLocalState(fresh);
+
+      try {
+        const created = await apiCreateRun(fresh);
+        if (created) {
+          persistRunId(created.id);
+          runIdRef.current = created.id;
+          setRunId(created.id);
+          setDurableEnabled(true);
+          setState(created.state);
+          saveLocalState(created.state);
+        } else {
+          setDurableEnabled(false);
+        }
+      } catch (err) {
+        console.error(err);
+        setDurableEnabled(false);
+      }
+
+      setTick((t) => t + 1);
+    })();
   }, []);
 
   const refreshNow = useCallback(() => {
@@ -323,6 +506,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppContextValue = {
     state,
     ready: didLoad,
+    runId,
+    shareUrl,
+    durableEnabled,
     threshold,
     tiltActive,
     apiMessage,

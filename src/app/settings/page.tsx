@@ -3,8 +3,17 @@
 import { useApp } from "@/lib/store";
 
 export default function SettingsPage() {
-  const { state, ready, updateSettings, resetAll, refreshNow, sources, matchCount } =
-    useApp();
+  const {
+    state,
+    ready,
+    shareUrl,
+    durableEnabled,
+    updateSettings,
+    resetAll,
+    refreshNow,
+    sources,
+    matchCount,
+  } = useApp();
   if (!ready) return null;
 
   const s = state.settings;
@@ -23,6 +32,35 @@ export default function SettingsPage() {
             : " ESPN siempre disponible."}
         </p>
       </header>
+
+      <div className="ios-inset divide-y divide-[var(--line)]">
+        <div className="px-4 py-3">
+          <p className="text-[13px] text-[var(--muted)]">Link secreto</p>
+          {durableEnabled && shareUrl ? (
+            <>
+              <p className="mt-1 break-all text-[14px] leading-snug">{shareUrl}</p>
+              <button
+                type="button"
+                className="btn btn-ghost mt-3 w-full"
+                onClick={() => {
+                  void navigator.clipboard.writeText(shareUrl);
+                }}
+              >
+                Copiar link
+              </button>
+              <p className="mt-2 text-[13px] text-[var(--muted)]">
+                Quien tenga este link ve tu racha. Si lo perdés, no hay
+                recuperación.
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-[15px] text-[var(--muted)]">
+              Persistencia en la nube no configurada · el estado queda solo en
+              este dispositivo.
+            </p>
+          )}
+        </div>
+      </div>
 
       <div className="ios-inset divide-y divide-[var(--line)]">
         <div className="px-4 py-3">
