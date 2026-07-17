@@ -18,7 +18,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col md:max-w-xl">
-      <main className="safe-pad flex-1 pb-32 pt-2">{children}</main>
+      {/* Extra bottom pad so last cards clear the fixed tab bar + home indicator */}
+      <main className="safe-pad flex-1 pt-2 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))]">
+        {children}
+      </main>
       <nav className="ios-tabbar fixed inset-x-0 bottom-0 z-40">
         <div className="mx-auto flex max-w-lg items-stretch justify-between gap-0 px-1 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 md:max-w-xl">
           {LINKS.map((l) => {

@@ -89,8 +89,8 @@ a {
 }
 
 .safe-pad {
+  /* Horizontal + top only — bottom clearance is owned by AppShell (tab bar). */
   padding-top: max(8px, env(safe-area-inset-top));
-  padding-bottom: max(8px, env(safe-area-inset-bottom));
   padding-left: max(16px, env(safe-area-inset-left));
   padding-right: max(16px, env(safe-area-inset-right));
 }
