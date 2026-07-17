@@ -28,9 +28,10 @@ export function settleMarketFromScore(
     case "btts_no":
       return !btts ? "win" : "loss";
     case "ah_home_m025":
-      // Approximate Asian -0.25: half loss on draw, win if home
+      // Asian -0.25: home win = full win; away = full loss; draw = half-loss.
+      // We have no half-loss outcome — treat draw as push (stake returned).
       if (homeWin) return "win";
-      if (draw) return "loss";
+      if (draw) return "push";
       return "loss";
     case "ah_home_m05":
       return homeWin ? "win" : "loss";

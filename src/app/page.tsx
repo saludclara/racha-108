@@ -26,7 +26,7 @@ export default function HomePage() {
     <div className="rise space-y-5 pb-4">
       <header className="pt-3">
         <p className="section-label !normal-case !tracking-normal">
-          Partidos reales · multi-fuente free · 11.11 AUD · cada 1:11:11
+          Partidos reales · multi-fuente free · 11.11 AUD · cada 1h 11m 11s
         </p>
         <h1 className="large-title">
           Racha <span style={{ color: "var(--ios-blue)" }}>108</span>
@@ -36,12 +36,13 @@ export default function HomePage() {
       <section className="ios-card p-5">
         <div className="flex items-center justify-between">
           <p className="text-[13px] text-[var(--muted)]">Próxima decisión</p>
-          <span className="pill pill-auto">1:11:11</span>
+          <span className="pill pill-auto">1h 11m 11s</span>
         </div>
         <Countdown />
         <p className="mt-2 text-[13px] text-[var(--muted)]">
-          Cada ciclo 1:11:11 hace 1 pick (prioriza live; si no, el mejor
-          partido real disponible). Se liquida con marcador oficial.
+          Cada ciclo (1h 11m 11s) hace 1 pick (live o kickoff ≤6h). Se liquida
+          con marcador oficial; si el feed no cierra a tiempo, push y HotStack
+          libre.
         </p>
         {apiMessage && (
           <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>
@@ -49,7 +50,7 @@ export default function HomePage() {
           </p>
         )}
         <p className="mt-1 text-[12px] text-[var(--muted)]">
-          {matchCount} partidos en feed · umbral {threshold}
+          {matchCount} partidos en feed · preferencia {threshold}
         </p>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
@@ -101,7 +102,7 @@ export default function HomePage() {
           </div>
           {tiltActive && (
             <p className="mt-3 text-[13px]" style={{ color: "var(--warn)" }}>
-              Tilt guard · umbral {threshold}
+              Tilt guard · preferencia {threshold}
             </p>
           )}
         </div>

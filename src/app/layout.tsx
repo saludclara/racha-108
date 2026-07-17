@@ -6,7 +6,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Racha 108",
   description:
-    "Apuestas ficticias automáticas · 11.11 AUD/hora · objetivo 108",
+    "Apuestas ficticias automáticas · 11.11 AUD · ciclo 1h 11m 11s · objetivo 108",
   applicationName: "Racha 108",
   appleWebApp: {
     capable: true,

@@ -94,6 +94,8 @@ type EspnEvent = {
     type?: {
       state?: string;
       completed?: boolean;
+      name?: string;
+      description?: string;
     };
   };
   competitions?: {
@@ -142,7 +144,14 @@ function statsFromCompetitor(c: EspnCompetitor): TeamStats {
 function mapStatus(
   state?: string,
   completed?: boolean,
+  name?: string,
+  description?: string,
 ): MatchCandidate["status"] {
+  const label = `${name ?? ""} ${description ?? ""}`.toUpperCase();
+  // Postponed / suspended — keep open until abandon deadline
+  if (/POSTPON|SUSPEND/.test(label)) return "scheduled";
+  // Cancelled / abandoned / walkover — void (settle → push sin scores)
+  if (/CANCEL|ABANDON|FORFEIT|WALKOVER/.test(label)) return "finished";
   if (completed || state === "post") return "finished";
   if (state === "in") return "inplay";
   return "scheduled";
@@ -163,6 +172,8 @@ function eventToCandidate(
   const status = mapStatus(
     event.status?.type?.state,
     event.status?.type?.completed,
+    event.status?.type?.name,
+    event.status?.type?.description,
   );
   const homeScore =
     homeC.score != null && homeC.score !== ""

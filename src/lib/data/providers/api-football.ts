@@ -27,6 +27,10 @@ type AfFixture = {
 function mapStatus(short: string): MatchCandidate["status"] {
   const s = short.toUpperCase();
   if (["FT", "AET", "PEN"].includes(s)) return "finished";
+  // Cancelled / abandoned / walkover — void as finished (settle → push sin scores)
+  if (["CANC", "ABD", "AWD", "WO"].includes(s)) return "finished";
+  // Postponed — still open; do not settle as push yet
+  if (s === "PST") return "scheduled";
   if (["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "INT"].includes(s))
     return "inplay";
   return "scheduled";

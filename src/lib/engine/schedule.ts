@@ -55,6 +55,25 @@ export function hourKeyFor(date: Date, timeZone = DEFAULT_TIMEZONE): string {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}-c${idx}`;
 }
 
+/** Extract `c{index}` from an hourKey (`…-c18746`). */
+export function parseCycleIndex(hourKey: string | null | undefined): number | null {
+  if (!hourKey) return null;
+  const m = /-c(\d+)\s*$/.exec(hourKey);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Stable key for a known cycle index in the user's timezone. */
+export function hourKeyForIndex(
+  index: number,
+  timeZone = DEFAULT_TIMEZONE,
+): string {
+  const start = cycleStart(index);
+  const p = wallParts(start, timeZone);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}-c${index}`;
+}
+
 export function nextHourBoundary(
   date: Date,
   _timeZone = DEFAULT_TIMEZONE,

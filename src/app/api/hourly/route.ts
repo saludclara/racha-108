@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildHourlyPick, refreshPickSettlement } from "@/lib/data/real";
+import type { SourceStatus } from "@/lib/data/providers/types";
 import type { ScoredPick } from "@/lib/engine/types";
+import {
+  guardBrowserOrCron,
+  guardJsonBody,
+  guardRateLimit,
+} from "@/lib/api/request-guard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -23,7 +29,29 @@ function feedFromSearch(req: NextRequest) {
   };
 }
 
+/** Hide provider error strings / key presence probes. */
+function publicSources(sources: SourceStatus[] | undefined): SourceStatus[] {
+  if (!sources?.length) return [];
+  return sources.map((s) => ({
+    id: s.id,
+    label: s.label,
+    enabled: s.enabled,
+    configured: s.enabled ? true : false,
+    ok: s.ok,
+    count: s.count,
+  }));
+}
+
+function withPublicSources<T extends { sources?: SourceStatus[] }>(data: T): T {
+  if (!data.sources) return data;
+  return { ...data, sources: publicSources(data.sources) };
+}
+
 export async function GET(req: NextRequest) {
+  const denied =
+    guardBrowserOrCron(req) ?? guardRateLimit(req, "hourly-get", 30, 60_000);
+  if (denied) return denied;
+
   const hourKey = req.nextUrl.searchParams.get("hourKey");
   const threshold = Number(req.nextUrl.searchParams.get("threshold") ?? "82");
 
@@ -41,7 +69,7 @@ export async function GET(req: NextRequest) {
       new Date(),
       feedFromSearch(req),
     );
-    return NextResponse.json(data, {
+    return NextResponse.json(withPublicSources(data), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
@@ -57,6 +85,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const denied =
+    guardBrowserOrCron(req) ??
+    guardJsonBody(req) ??
+    guardRateLimit(req, "hourly-post", 60, 60_000);
+  if (denied) return denied;
+
   try {
     const body = (await req.json()) as {
       pick?: ScoredPick;
@@ -75,7 +109,7 @@ export async function POST(req: NextRequest) {
       enableOddsApi: body.oddsApi !== false,
       enableEsports: body.esports !== false,
     });
-    return NextResponse.json(data, {
+    return NextResponse.json(withPublicSources(data), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {

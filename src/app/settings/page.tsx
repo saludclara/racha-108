@@ -50,7 +50,8 @@ export default function SettingsPage() {
               </button>
               <p className="mt-2 text-[13px] text-[var(--muted)]">
                 Quien tenga este link ve tu racha. Si lo perdés, no hay
-                recuperación.
+                recuperación. Con link activo, un cron externo puede avanzar
+                picks cada ~15 min aunque la app esté cerrada.
               </p>
             </>
           ) : (
@@ -180,7 +181,7 @@ export default function SettingsPage() {
 
         <label className="block px-4 py-3">
           <span className="flex justify-between text-[15px]">
-            Umbral score
+            Preferencia de score
             <span className="text-[var(--muted)]">{s.scoreThreshold}</span>
           </span>
           <input
@@ -193,6 +194,10 @@ export default function SettingsPage() {
               updateSettings({ scoreThreshold: Number(e.target.value) })
             }
           />
+          <span className="mt-2 block text-[13px] text-[var(--muted)]">
+            Prioriza picks ≥ este score. Si no hay ninguno, el ciclo igual elige
+            el mejor disponible (nunca se inventan partidos).
+          </span>
         </label>
 
         {(

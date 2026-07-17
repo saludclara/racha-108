@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { createInitialState, type AppState } from "@/lib/engine";
+import { normalizeAppState } from "@/lib/runs/normalize";
+import {
+  guardBrowserOrCron,
+  guardJsonBody,
+  guardRateLimit,
+} from "@/lib/api/request-guard";
 import {
   getSupabaseAdmin,
   isSupabaseConfigured,
@@ -19,33 +25,17 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Minimal shape check + merge with defaults so old/partial payloads stay usable. */
-export function normalizeAppState(raw: unknown): AppState | null {
-  if (!isPlainObject(raw)) return null;
-  if (typeof raw.hotStack !== "number" || typeof raw.vault !== "number") {
-    return null;
-  }
-  if (!isPlainObject(raw.settings)) return null;
-
-  const base = createInitialState();
-  return {
-    ...base,
-    ...(raw as Partial<AppState>),
-    settings: {
-      ...base.settings,
-      ...(raw.settings as Partial<AppState["settings"]>),
-    },
-    history: Array.isArray(raw.history)
-      ? (raw.history as AppState["history"])
-      : base.history,
-    vaultLedger: Array.isArray(raw.vaultLedger)
-      ? (raw.vaultLedger as AppState["vaultLedger"])
-      : base.vaultLedger,
-  };
+function genericDbError() {
+  return NextResponse.json({ error: "Error de base de datos" }, { status: 500 });
 }
+
+export { normalizeAppState };
 
 export async function GET(req: Request) {
   if (!isSupabaseConfigured()) return notConfigured();
+
+  const denied = guardBrowserOrCron(req) ?? guardRateLimit(req, "run-get", 60, 60_000);
+  if (denied) return denied;
 
   const id = new URL(req.url).searchParams.get("id")?.trim() ?? "";
   if (!UUID_RE.test(id)) {
@@ -54,13 +44,13 @@ export async function GET(req: Request) {
 
   const { data, error } = await getSupabaseAdmin()
     .from("runs")
-    .select("id, state")
+    .select("id, state, updated_at")
     .eq("id", id)
     .maybeSingle();
 
   if (error) {
     console.error("[api/run GET]", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return genericDbError();
   }
   if (!data) {
     return NextResponse.json({ error: "Run no encontrado" }, { status: 404 });
@@ -71,11 +61,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "State inválido" }, { status: 500 });
   }
 
-  return NextResponse.json({ id: data.id as string, state });
+  return NextResponse.json({
+    id: data.id as string,
+    state,
+    updatedAt: data.updated_at as string,
+  });
 }
 
 export async function POST(req: Request) {
   if (!isSupabaseConfigured()) return notConfigured();
+
+  const denied =
+    guardBrowserOrCron(req) ??
+    guardJsonBody(req) ??
+    guardRateLimit(req, "run-create", 5, 15 * 60_000);
+  if (denied) return denied;
 
   let body: unknown = {};
   try {
@@ -96,25 +96,29 @@ export async function POST(req: Request) {
   const { data, error } = await getSupabaseAdmin()
     .from("runs")
     .insert({ state })
-    .select("id, state")
+    .select("id, state, updated_at")
     .single();
 
   if (error || !data) {
     console.error("[api/run POST]", error);
-    return NextResponse.json(
-      { error: error?.message ?? "No se pudo crear" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "No se pudo crear" }, { status: 500 });
   }
 
   return NextResponse.json({
     id: data.id as string,
     state: normalizeAppState(data.state) ?? state,
+    updatedAt: data.updated_at as string,
   });
 }
 
 export async function PUT(req: Request) {
   if (!isSupabaseConfigured()) return notConfigured();
+
+  const denied =
+    guardBrowserOrCron(req) ??
+    guardJsonBody(req) ??
+    guardRateLimit(req, "run-put", 120, 60_000);
+  if (denied) return denied;
 
   let body: unknown;
   try {
@@ -137,23 +141,61 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "state inválido" }, { status: 400 });
   }
 
-  const { data, error } = await getSupabaseAdmin()
+  const expectedUpdatedAt =
+    typeof body.expectedUpdatedAt === "string"
+      ? body.expectedUpdatedAt.trim()
+      : "";
+
+  const nowIso = new Date().toISOString();
+  let query = getSupabaseAdmin()
     .from("runs")
-    .update({ state, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select("id, state")
+    .update({ state, updated_at: nowIso })
+    .eq("id", id);
+
+  if (expectedUpdatedAt) {
+    query = query.eq("updated_at", expectedUpdatedAt);
+  }
+
+  const { data, error } = await query
+    .select("id, state, updated_at")
     .maybeSingle();
 
   if (error) {
     console.error("[api/run PUT]", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return genericDbError();
   }
+
   if (!data) {
+    // Conflict or missing — load current for client merge
+    const { data: cur } = await getSupabaseAdmin()
+      .from("runs")
+      .select("id, state, updated_at")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!cur) {
+      return NextResponse.json({ error: "Run no encontrado" }, { status: 404 });
+    }
+
+    if (expectedUpdatedAt) {
+      const curState = normalizeAppState(cur.state);
+      return NextResponse.json(
+        {
+          error: "conflict",
+          id: cur.id as string,
+          state: curState,
+          updatedAt: cur.updated_at as string,
+        },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json({ error: "Run no encontrado" }, { status: 404 });
   }
 
   return NextResponse.json({
     id: data.id as string,
     state: normalizeAppState(data.state) ?? state,
+    updatedAt: data.updated_at as string,
   });
 }

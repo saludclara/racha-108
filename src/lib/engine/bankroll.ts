@@ -162,11 +162,12 @@ export function applySkip(
   };
 }
 
-/** Draw No Bet void: stake back, streak unchanged */
+/** Draw No Bet / abandon void: stake back, streak unchanged */
 export function applyPush(
   state: AppState,
   pick: ScoredPick,
   now = new Date(),
+  note = "Push (ej. DNB en empate) — stake devuelto",
 ): AppState {
   const stake = state.hotStack;
   const entry: HistoryEntry = {
@@ -183,7 +184,7 @@ export function applyPush(
     matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
     score: pick.totalScore,
     layers: pick.layers,
-    note: "Push (ej. DNB en empate) — stake devuelto",
+    note,
   };
 
   return {

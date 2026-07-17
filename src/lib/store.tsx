@@ -12,10 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  applyLoss,
-  applyPush,
-  applySkip,
-  applyWin,
+  applyHourlyResult,
   createInitialState,
   effectiveThreshold,
   hourKeyFor,
@@ -108,7 +105,9 @@ function buildShareUrl(runId: string): string {
   return url.toString();
 }
 
-async function apiCreateRun(state: AppState): Promise<{ id: string; state: AppState } | null> {
+type RunPayload = { id: string; state: AppState; updatedAt: string };
+
+async function apiCreateRun(state: AppState): Promise<RunPayload | null> {
   const res = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -117,29 +116,45 @@ async function apiCreateRun(state: AppState): Promise<{ id: string; state: AppSt
   });
   if (res.status === 503) return null;
   if (!res.ok) throw new Error(`create run ${res.status}`);
-  return (await res.json()) as { id: string; state: AppState };
+  return (await res.json()) as RunPayload;
 }
 
-async function apiLoadRun(id: string): Promise<{ id: string; state: AppState } | null> {
+async function apiLoadRun(id: string): Promise<RunPayload | null> {
   const res = await fetch(`/api/run?id=${encodeURIComponent(id)}`, {
     cache: "no-store",
   });
   if (res.status === 503) return null;
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`load run ${res.status}`);
-  return (await res.json()) as { id: string; state: AppState };
+  return (await res.json()) as RunPayload;
 }
 
-async function apiSaveRun(id: string, state: AppState): Promise<boolean> {
+async function apiSaveRun(
+  id: string,
+  state: AppState,
+  expectedUpdatedAt: string | null,
+): Promise<
+  | { kind: "ok"; payload: RunPayload }
+  | { kind: "conflict"; payload: RunPayload }
+  | "unavailable"
+> {
   const res = await fetch("/api/run", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, state }),
+    body: JSON.stringify({
+      id,
+      state,
+      expectedUpdatedAt: expectedUpdatedAt || undefined,
+    }),
     cache: "no-store",
   });
-  if (res.status === 503) return false;
+  if (res.status === 503) return "unavailable";
+  if (res.status === 409) {
+    const body = (await res.json()) as RunPayload;
+    return { kind: "conflict", payload: body };
+  }
   if (!res.ok) throw new Error(`save run ${res.status}`);
-  return true;
+  return { kind: "ok", payload: (await res.json()) as RunPayload };
 }
 
 async function fetchHourly(
@@ -180,55 +195,6 @@ async function fetchRefresh(
   return (await res.json()) as HourlyPickResponse;
 }
 
-function applyApiResult(
-  state: AppState,
-  hourKey: string,
-  data: HourlyPickResponse,
-): AppState {
-  if (data.status === "empty" || !data.pick) {
-    if (state.lastResolvedHourKey === hourKey) return state;
-    return applySkip(
-      { ...state, currentHourKey: hourKey, currentPick: null },
-      hourKey,
-      data.message ?? "Sin partidos reales en el feed este ciclo.",
-    );
-  }
-
-  if (data.status === "pending") {
-    return {
-      ...state,
-      currentHourKey: hourKey,
-      currentPick: data.pick,
-      pickStatus: "pending",
-    };
-  }
-
-  if (state.lastResolvedHourKey === hourKey && state.pickStatus === "resolved") {
-    return {
-      ...state,
-      currentHourKey: hourKey,
-      currentPick: data.pick,
-    };
-  }
-
-  const pick = data.pick;
-  const withPick: AppState = {
-    ...state,
-    currentHourKey: hourKey,
-    currentPick: pick,
-    pickStatus: "ready",
-  };
-
-  if (data.settle === "win") return applyWin(withPick, pick);
-  if (data.settle === "push") return applyPush(withPick, pick);
-  if (data.settle === "loss") return applyLoss(withPick, pick);
-
-  return {
-    ...withPick,
-    pickStatus: "pending",
-  };
-}
-
 function subscribeHydration(onStoreChange: () => void) {
   queueMicrotask(onStoreChange);
   return () => {};
@@ -259,6 +225,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [tick, setTick] = useState(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const updatedAtRef = useRef<string | null>(null);
   const bootstrappedRef = useRef(false);
 
   const threshold = useMemo(
@@ -291,6 +258,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (remote) {
             persistRunId(remote.id);
             runIdRef.current = remote.id;
+            updatedAtRef.current = remote.updatedAt;
             setRunId(remote.id);
             setDurableEnabled(true);
             setState(remote.state);
@@ -306,6 +274,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (created) {
           persistRunId(created.id);
           runIdRef.current = created.id;
+          updatedAtRef.current = created.updatedAt;
           setRunId(created.id);
           setDurableEnabled(true);
           setState(created.state);
@@ -328,6 +297,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+      // React Strict Mode remounts effects in dev; reset so bootstrap can
+      // run again (otherwise ready stays false forever with "Cargando…").
+      bootstrappedRef.current = false;
     };
   }, [hydrated]);
 
@@ -341,9 +313,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      void apiSaveRun(id, state).catch((err) => {
-        console.error(err);
-      });
+      void apiSaveRun(id, state, updatedAtRef.current)
+        .then((result) => {
+          if (result === "unavailable") return;
+          updatedAtRef.current = result.payload.updatedAt;
+          if (result.kind === "conflict" && result.payload.state) {
+            // Cron (or another tab) won — adopt server state
+            setState(result.payload.state);
+            saveLocalState(result.payload.state);
+          }
+        })
+        .catch((err) => {
+          console.error(err);
+        });
     }, REMOTE_SAVE_DEBOUNCE_MS);
 
     return () => {
@@ -351,68 +333,83 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [state, didLoad, durableEnabled]);
 
-  // One decision per 1:11:11 cycle
+  // One decision per 1:11:11 cycle (cron advances durable runs server-side)
   useEffect(() => {
     if (!didLoad) return;
     let cancelled = false;
 
     (async () => {
-      const cycleKey = hourKeyFor(new Date(), state.settings.timezone);
-
       try {
+        // Prefer server state so closed-tab cron picks show up in the UI
+        let working = state;
+        const id = runIdRef.current;
+        if (id && durableEnabled) {
+          const remote = await apiLoadRun(id);
+          if (cancelled) return;
+          if (remote) {
+            working = remote.state;
+            updatedAtRef.current = remote.updatedAt;
+            setState(remote.state);
+            saveLocalState(remote.state);
+          }
+        }
+
+        const cycleKey = hourKeyFor(new Date(), working.settings.timezone);
+        const th = effectiveThreshold(
+          working.settings,
+          working.tiltGuardUntil,
+        );
+
         let data: HourlyPickResponse;
 
-        if (state.pickStatus === "pending" && state.currentPick) {
-          // Hold across cycles until official FT — never void for rollover
-          data = await fetchRefresh(state.currentPick, state.settings);
+        if (working.pickStatus === "pending" && working.currentPick) {
+          data = await fetchRefresh(working.currentPick, working.settings);
           if (cancelled) return;
           setMatchCount(data.matchCount);
           if (data.sources) setSources(data.sources);
 
           if (data.status === "pending") {
             setApiMessage(
-              data.message ??
-                "Esperando resultado · HotStack a riesgo",
+              data.message ?? "Esperando resultado · HotStack a riesgo",
             );
             setState((s) =>
-              applyApiResult(s, s.currentHourKey ?? cycleKey, data),
+              applyHourlyResult(s, s.currentHourKey ?? cycleKey, data),
             );
             return;
           }
 
-          // Settled → book it
-          const pickCycle = state.currentHourKey ?? data.hourKey;
-          setState((s) => applyApiResult(s, pickCycle, data));
+          const pickCycle = working.currentHourKey ?? data.hourKey;
+          setState((s) => applyHourlyResult(s, pickCycle, data));
           if (cancelled) return;
 
           if (pickCycle === cycleKey) {
             setApiMessage(
-              data.message ??
-                "Liquidado con marcador real · HotStack listo",
+              data.message ?? "Liquidado con marcador real · HotStack listo",
             );
             return;
           }
 
-          // Slot freed in a later cycle → decide current cycle (settleable only)
-          data = await fetchHourly(cycleKey, threshold, state.settings);
+          data = await fetchHourly(cycleKey, th, working.settings);
         } else if (
-          state.lastResolvedHourKey === cycleKey &&
-          (state.pickStatus === "resolved" || state.pickStatus === "skipped")
+          working.lastResolvedHourKey === cycleKey &&
+          (working.pickStatus === "resolved" ||
+            working.pickStatus === "skipped")
         ) {
           setApiMessage(
-            "Ciclo libre · HotStack listo · próxima decisión en el countdown.",
+            durableEnabled
+              ? "Ciclo libre · cron activo · HotStack listo."
+              : "Ciclo libre · HotStack listo · próxima decisión en el countdown.",
           );
           return;
         } else {
-          // No open pick → decide this cycle (or SKIP if nothing settleable)
-          data = await fetchHourly(cycleKey, threshold, state.settings);
+          data = await fetchHourly(cycleKey, th, working.settings);
         }
 
         if (cancelled) return;
         setApiMessage(data.message ?? null);
         setMatchCount(data.matchCount);
         if (data.sources) setSources(data.sources);
-        setState((s) => applyApiResult(s, cycleKey, data));
+        setState((s) => applyHourlyResult(s, cycleKey, data));
       } catch (err) {
         if (cancelled) return;
         console.error(err);
@@ -429,12 +426,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [
     didLoad,
     tick,
+    durableEnabled,
     state.settings.timezone,
     state.settings.enableApiFootball,
     state.settings.enableOddsApi,
     state.settings.enableEsports,
     threshold,
     state.pickStatus,
+    state.currentPick?.match.id,
     state.currentHourKey,
     state.lastResolvedHourKey,
   ]);
@@ -472,6 +471,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem("racha-108-state-v2");
       clearRunId();
       runIdRef.current = null;
+      updatedAtRef.current = null;
       setRunId(null);
 
       const fresh = createInitialState();
@@ -483,6 +483,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (created) {
           persistRunId(created.id);
           runIdRef.current = created.id;
+          updatedAtRef.current = created.updatedAt;
           setRunId(created.id);
           setDurableEnabled(true);
           setState(created.state);
