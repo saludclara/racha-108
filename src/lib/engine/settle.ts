@@ -40,9 +40,19 @@ export function settleMarketFromScore(
   }
 }
 
+/** Settle from scores only — used when FT is inferred / abandon with marcador. */
+export function settleFromScores(
+  market: MarketType,
+  homeScore: number | null | undefined,
+  awayScore: number | null | undefined,
+): SettleResult | null {
+  if (homeScore == null || awayScore == null) return null;
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return null;
+  return settleMarketFromScore(market, homeScore, awayScore);
+}
+
 export function settlePick(pick: ScoredPick): SettleResult | null {
   const { match, market } = pick;
   if (match.status !== "finished") return null;
-  if (match.homeScore == null || match.awayScore == null) return null;
-  return settleMarketFromScore(market, match.homeScore, match.awayScore);
+  return settleFromScores(market, match.homeScore, match.awayScore);
 }

@@ -15,6 +15,8 @@ export type FetchOptions = {
   enableApiFootball?: boolean;
   enableOddsApi?: boolean;
   enableEsports?: boolean;
+  /** Prefer this ESPN/AF league name when resolving a single event. */
+  leagueHint?: string;
 };
 
 export type ProviderResult = {

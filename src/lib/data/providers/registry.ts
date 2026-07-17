@@ -1,5 +1,5 @@
 import { mergeMatches } from "@/lib/data/merge";
-import type { MatchCandidate } from "@/lib/engine/types";
+import type { MatchCandidate, ScoredPick } from "@/lib/engine/types";
 import { apiFootballProvider } from "./api-football";
 import { espnProvider } from "./espn";
 import { oddsApiProvider } from "./odds-api";
@@ -31,6 +31,43 @@ export async function fetchAllMatches(
     matches,
     sources: results.map((r) => r.status),
   };
+}
+
+/**
+ * Direct per-event lookup — bypasses scoreboard date windows / cache.
+ * Used so pending picks always get a real FT when the provider still has it.
+ */
+export async function refreshMatchForPick(
+  pick: ScoredPick,
+  opts: FetchOptions = {},
+): Promise<MatchCandidate | null> {
+  const ids = new Set<string>();
+  if (pick.match.externalId) ids.add(pick.match.externalId);
+  for (const v of Object.values(pick.match.providers ?? {})) {
+    if (v) ids.add(v);
+  }
+  // espn-401… / af-123…
+  const bare = pick.match.id.replace(/^(espn|af)-/, "");
+  if (bare) ids.add(bare);
+
+  const leagueHint = pick.match.league;
+  const providers = ALL.filter((p) => p.refreshByExternalId);
+
+  for (const id of ids) {
+    for (const p of providers) {
+      if (p.id === "api-football" && opts.enableApiFootball === false) continue;
+      try {
+        const m = await p.refreshByExternalId?.(id, {
+          ...opts,
+          leagueHint,
+        });
+        if (m) return m;
+      } catch {
+        // try next
+      }
+    }
+  }
+  return null;
 }
 
 export function providerConfigSummary(): SourceStatus[] {

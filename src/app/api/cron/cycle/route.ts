@@ -113,7 +113,7 @@ export async function GET(req: Request) {
       }
 
       try {
-        const result = processRunCycle(id, state, snapshot, now);
+        const result = await processRunCycle(id, state, snapshot, now);
         for (const a of result.actions) bump(actionCounts, a);
 
         if (!result.changed) continue;

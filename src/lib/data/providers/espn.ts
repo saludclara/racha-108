@@ -87,18 +87,22 @@ type EspnCompetitor = {
   team: { id?: string; displayName: string };
 };
 
+type EspnStatus = {
+  type?: {
+    state?: string;
+    completed?: boolean;
+    name?: string;
+    description?: string;
+  };
+};
+
 type EspnEvent = {
   id: string;
-  date: string;
-  status?: {
-    type?: {
-      state?: string;
-      completed?: boolean;
-      name?: string;
-      description?: string;
-    };
-  };
+  date?: string;
+  status?: EspnStatus;
   competitions?: {
+    date?: string;
+    status?: EspnStatus;
     competitors?: EspnCompetitor[];
     odds?: { details?: string; overUnder?: number; spread?: number }[];
   }[];
@@ -161,7 +165,8 @@ function eventToCandidate(
   event: EspnEvent,
   leagueName: string,
 ): MatchCandidate | null {
-  const competitors = event.competitions?.[0]?.competitors;
+  const competition = event.competitions?.[0];
+  const competitors = competition?.competitors;
   if (!competitors || competitors.length < 2) return null;
   const homeC = competitors.find((c) => c.homeAway === "home");
   const awayC = competitors.find((c) => c.homeAway === "away");
@@ -169,11 +174,13 @@ function eventToCandidate(
 
   const home = statsFromCompetitor(homeC);
   const away = statsFromCompetitor(awayC);
+  // Scoreboard: status on event. Summary API: status on competition.
+  const st = event.status ?? competition?.status;
   const status = mapStatus(
-    event.status?.type?.state,
-    event.status?.type?.completed,
-    event.status?.type?.name,
-    event.status?.type?.description,
+    st?.type?.state,
+    st?.type?.completed,
+    st?.type?.name,
+    st?.type?.description,
   );
   const homeScore =
     homeC.score != null && homeC.score !== ""
@@ -184,12 +191,14 @@ function eventToCandidate(
       ? Number(awayC.score)
       : undefined;
 
-  const kickoff = new Date(event.date);
+  const kickoffIso = event.date ?? competition?.date;
+  if (!kickoffIso) return null;
+  const kickoff = new Date(kickoffIso);
   const match: MatchCandidate = {
     id: `espn-${event.id}`,
     externalId: event.id,
-    kickoff: event.date,
-    kickoffUtc: event.date,
+    kickoff: kickoffIso,
+    kickoffUtc: kickoffIso,
     league: leagueName,
     home,
     away,
@@ -246,10 +255,30 @@ async function mapPool<T, R>(
   return results;
 }
 
+async function fetchEspnSummary(
+  slug: string,
+  eventId: string,
+): Promise<EspnEvent | null> {
+  try {
+    const res = await fetch(
+      `${ESPN_BASE}/${slug}/summary?event=${encodeURIComponent(eventId)}`,
+      {
+        headers: { "User-Agent": "racha-108/1.0" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as { header?: EspnEvent };
+    return json.header ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function loadEspnMatches(now: Date): Promise<MatchCandidate[]> {
-  // Yesterday+today+tomorrow: ESPN boards use US calendar days, so a
-  // 01:00Z kickoff lives on "yesterday" UTC and must stay fetchable after FT.
-  const dates = [-1, 0, 1].map((i) =>
+  // ±2 days: ESPN boards use US calendar days for overnight kickoffs.
+  const dates = [-2, -1, 0, 1, 2].map((i) =>
     utcDateStamp(new Date(now.getTime() + i * 86400000)),
   );
   const jobs = ESPN_LEAGUES.flatMap((league) =>
@@ -292,7 +321,7 @@ export const espnProvider: MatchProvider = {
   async fetch({ now = new Date() }): Promise<ProviderResult> {
     try {
       const matches = await withCache(
-        `espn:${utcDateStamp(now)}`,
+        `espn:${utcDateStamp(now)}:v2`,
         CACHE_TTL.espn,
         () => loadEspnMatches(now),
       );
@@ -321,6 +350,26 @@ export const espnProvider: MatchProvider = {
         },
       };
     }
+  },
+  async refreshByExternalId(externalId, opts) {
+    const id = externalId.trim();
+    if (!id) return null;
+    const preferred = ESPN_LEAGUES.find((l) => l.name === opts?.leagueHint);
+    const order = preferred
+      ? [preferred, ...ESPN_LEAGUES.filter((l) => l.slug !== preferred.slug)]
+      : ESPN_LEAGUES;
+
+    // Probe preferred league first, then fan-out (settle must not miss FT)
+    for (const league of order.slice(0, 8)) {
+      const header = await fetchEspnSummary(league.slug, id);
+      const m = header ? eventToCandidate(header, league.name) : null;
+      if (m) return m;
+    }
+    const rest = await mapPool(order.slice(8), 10, async (league) => {
+      const header = await fetchEspnSummary(league.slug, id);
+      return header ? eventToCandidate(header, league.name) : null;
+    });
+    return rest.find((m) => m != null) ?? null;
   },
 };
 

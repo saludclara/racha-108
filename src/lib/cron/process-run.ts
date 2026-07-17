@@ -9,7 +9,7 @@ import {
 import { applyHourlyResult } from "@/lib/engine/apply-hourly";
 import {
   buildHourlyPickFromMatches,
-  refreshPickSettlementFromMatches,
+  settlePendingAgainstSnapshot,
   type MatchFeedSnapshot,
 } from "@/lib/data/real";
 
@@ -55,13 +55,14 @@ function filterFeed(
 /**
  * Advance one durable run through settle / catch-up skips / current-cycle pick.
  * Uses a shared match snapshot so cron can process many runs in one invocation.
+ * Pending picks use direct event lookup so FT never silently becomes a blank push.
  */
-export function processRunCycle(
+export async function processRunCycle(
   id: string,
   state: AppState,
   snapshot: MatchFeedSnapshot,
   now = new Date(),
-): ProcessRunResult {
+): Promise<ProcessRunResult> {
   const actions: string[] = [];
   const tz = state.settings.timezone;
   const cycleKey = hourKeyFor(now, tz);
@@ -70,13 +71,17 @@ export function processRunCycle(
   const matchCount = feed.matches.length;
   let next = state;
 
-  // 1) Settle or abandon an open pick first
+  // 1) Settle or abandon an open pick first (hard path)
   if (next.pickStatus === "pending" && next.currentPick) {
-    const data = refreshPickSettlementFromMatches(
+    const data = await settlePendingAgainstSnapshot(
       next.currentPick,
-      feed.matches,
-      feed.sources,
+      feed,
       now,
+      {
+        enableApiFootball: next.settings.enableApiFootball,
+        enableOddsApi: next.settings.enableOddsApi,
+        enableEsports: next.settings.enableEsports,
+      },
     );
     const pickCycle = next.currentHourKey ?? data.hourKey;
     next = applyHourlyResult(next, pickCycle, data, now);

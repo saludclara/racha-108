@@ -87,8 +87,8 @@ async function fetchFixturesForDate(
 }
 
 async function loadApiFootball(now: Date, key: string): Promise<MatchCandidate[]> {
-  // Include yesterday so late-UTC / overnight fixtures stay settleable after FT.
-  const dates = [-1, 0, 1].map((i) =>
+  // ±2 days so overnight / late-UTC fixtures stay settleable after FT.
+  const dates = [-2, -1, 0, 1, 2].map((i) =>
     ymd(new Date(now.getTime() + i * 86400000)),
   );
   const seen = new Set<string>();
@@ -171,6 +171,28 @@ export const apiFootballProvider: MatchProvider = {
           error: err instanceof Error ? err.message : "API-Football failed",
         },
       };
+    }
+  },
+  async refreshByExternalId(externalId) {
+    const key = apiKey();
+    if (!key) return null;
+    const id = externalId.replace(/^af-/, "").trim();
+    if (!/^\d+$/.test(id)) return null;
+    try {
+      const res = await fetch(`${BASE}/fixtures?id=${id}`, {
+        headers: {
+          "x-apisports-key": key,
+          "User-Agent": "racha-108/1.0",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as { response?: AfFixture[] };
+      const row = json.response?.[0];
+      return row ? toCandidate(row) : null;
+    } catch {
+      return null;
     }
   },
 };

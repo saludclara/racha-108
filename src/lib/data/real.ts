@@ -1,8 +1,11 @@
-import { fetchAllMatches } from "@/lib/data/providers/registry";
+import {
+  fetchAllMatches,
+  refreshMatchForPick,
+} from "@/lib/data/providers/registry";
 import type { SourceStatus } from "@/lib/data/providers/types";
 import { CYCLE_MS } from "@/lib/engine/schedule";
 import { pickBestForHour } from "@/lib/engine/score";
-import { settlePick } from "@/lib/engine/settle";
+import { settleFromScores, settlePick } from "@/lib/engine/settle";
 import type { MatchCandidate, ScoredPick } from "@/lib/engine/types";
 
 /** Tolerate FT landing within this cycle + one more (keeps HotStack turning). */
@@ -66,16 +69,19 @@ export function shouldAbandonPick(pick: ScoredPick, now: Date): boolean {
 /**
  * Some feeds leave `inplay` with final scores after FT.
  * If kickoff+duration passed and both scores exist → treat as finished.
+ * At abandon deadline, force finished whenever scores exist (never push-with-score).
  */
 function withInferredFinish(
   match: MatchCandidate,
   now: Date,
+  force = false,
 ): MatchCandidate {
   if (match.status === "finished") return match;
   if (match.homeScore == null || match.awayScore == null) return match;
   const kick = kickoffMs(match);
   if (!Number.isFinite(kick)) return match;
-  if (now.getTime() < kick + estimatedMatchMs(match)) return match;
+  const readyAt = kick + estimatedMatchMs(match);
+  if (!force && now.getTime() < readyAt) return match;
   return { ...match, status: "finished" };
 }
 
@@ -217,12 +223,15 @@ function trySettleFinished(
   sources: SourceStatus[],
   now: Date,
 ): HourlyPickResponse {
+  const finished = { ...fresh, status: "finished" as const };
   const refreshed: ScoredPick = {
     ...pick,
-    match: fresh,
+    match: finished,
     hourKey: pick.hourKey,
   };
-  const settle = settlePick(refreshed);
+  const settle =
+    settlePick(refreshed) ??
+    settleFromScores(pick.market, finished.homeScore, finished.awayScore);
   if (settle) {
     return settledResponse(
       pick.hourKey,
@@ -230,7 +239,7 @@ function trySettleFinished(
       settle,
       matchCount,
       sources,
-      `Resultado real ${fresh.homeScore}-${fresh.awayScore} · HotStack listo`,
+      `Resultado real ${finished.homeScore}-${finished.awayScore} · HotStack listo`,
       now,
     );
   }
@@ -242,6 +251,44 @@ function trySettleFinished(
     matchCount,
     sources,
     "FT sin marcador legible · push (stake devuelto)",
+    now,
+  );
+}
+
+/**
+ * Guarantee a terminal outcome: win/loss if scores exist, else push.
+ * Never leaves a pick unresolved past the abandon window.
+ */
+function guaranteeSettle(
+  pick: ScoredPick,
+  fresh: MatchCandidate | null,
+  matchCount: number,
+  sources: SourceStatus[],
+  now: Date,
+  reason: string,
+): HourlyPickResponse {
+  const base = fresh ?? pick.match;
+  const scored = withInferredFinish(base, now, true);
+  if (scored.homeScore != null && scored.awayScore != null) {
+    return trySettleFinished(pick, scored, matchCount, sources, now);
+  }
+  // Last chance: scores already on the pending pick from live updates
+  const held = withInferredFinish(pick.match, now, true);
+  if (held.homeScore != null && held.awayScore != null) {
+    return trySettleFinished(pick, held, matchCount, sources, now);
+  }
+  const refreshed: ScoredPick = {
+    ...pick,
+    match: { ...base, status: "finished" },
+    hourKey: pick.hourKey,
+  };
+  return settledResponse(
+    pick.hourKey,
+    refreshed,
+    "push",
+    matchCount,
+    sources,
+    reason,
     now,
   );
 }
@@ -347,18 +394,20 @@ export function refreshPickSettlementFromMatches(
   now = new Date(),
 ): HourlyPickResponse {
   const found = findMatch(all, pick) ?? null;
-  const fresh = found ? withInferredFinish(found, now) : null;
+  const abandon = shouldAbandonPick(pick, now);
+  const fresh = found
+    ? withInferredFinish(found, now, abandon)
+    : null;
 
   if (!fresh) {
-    if (shouldAbandonPick(pick, now)) {
-      return settledResponse(
-        pick.hourKey,
+    if (abandon) {
+      return guaranteeSettle(
         pick,
-        "push",
+        null,
         all.length,
         sources,
-        "Partido desapareció del feed tras FT · push (stake devuelto)",
         now,
+        "Partido fuera del feed · liquidación garantizada",
       );
     }
     return {
@@ -385,21 +434,20 @@ export function refreshPickSettlementFromMatches(
     return trySettleFinished(refreshed, fresh, all.length, sources, now);
   }
 
-  // Stale: expected FT + slack passed, or legacy far-future lock
-  if (shouldAbandonPick(refreshed, now)) {
+  // Past abandon: ALWAYS terminal — prefer scores over blank push
+  if (abandon || shouldAbandonPick(refreshed, now)) {
     const far =
       (fresh.status ?? "scheduled") === "scheduled" &&
       kickoffMs(fresh) - now.getTime() > NEAR_KICKOFF_MS;
-    return settledResponse(
-      pick.hourKey,
+    return guaranteeSettle(
       refreshed,
-      "push",
+      fresh,
       all.length,
       sources,
-      far
-        ? "Pick fuera de ventana liquidable · push (stake devuelto)"
-        : `Sin FT a tiempo (${fresh.status}) · push (stake devuelto)`,
       now,
+      far
+        ? "Pick fuera de ventana liquidable · liquidación garantizada"
+        : `Sin FT oficial a tiempo (${fresh.status}) · liquidación garantizada`,
     );
   }
 
@@ -416,15 +464,77 @@ export function refreshPickSettlementFromMatches(
   };
 }
 
-/** Resolve a previously chosen pick against live multi-source data */
+function mergeDirect(
+  all: MatchCandidate[],
+  direct: MatchCandidate,
+): MatchCandidate[] {
+  const merged = [...all];
+  const idx = merged.findIndex(
+    (m) =>
+      m.id === direct.id ||
+      (direct.externalId && m.externalId === direct.externalId) ||
+      (direct.canonicalId && m.canonicalId === direct.canonicalId),
+  );
+  if (idx >= 0) merged[idx] = direct;
+  else merged.push(direct);
+  return merged;
+}
+
+/**
+ * Snapshot → direct event lookup → abandon guarantee.
+ * Prefer this in cron (reuses the shared board feed).
+ */
+export async function settlePendingAgainstSnapshot(
+  pick: ScoredPick,
+  snapshot: MatchFeedSnapshot,
+  now = new Date(),
+  feed: FeedOptions = {},
+): Promise<HourlyPickResponse> {
+  let result = refreshPickSettlementFromMatches(
+    pick,
+    snapshot.matches,
+    snapshot.sources,
+    now,
+  );
+  if (result.status === "settled") return result;
+
+  const direct = await refreshMatchForPick(pick, { now, ...feed });
+  if (direct) {
+    result = refreshPickSettlementFromMatches(
+      pick,
+      mergeDirect(snapshot.matches, direct),
+      snapshot.sources,
+      now,
+    );
+    if (result.status === "settled") return result;
+  }
+
+  if (shouldAbandonPick(result.pick ?? pick, now)) {
+    return guaranteeSettle(
+      result.pick ?? pick,
+      direct,
+      snapshot.matches.length,
+      snapshot.sources,
+      now,
+      "Liquidación forzada · HotStack liberado",
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Hard settlement path: board snapshot → direct event lookup → guarantee.
+ * Every pending pick eventually resolves to win | loss | push.
+ */
 export async function refreshPickSettlement(
   pick: ScoredPick,
   now = new Date(),
   feed: FeedOptions = {},
 ): Promise<HourlyPickResponse> {
-  const { matches: all, sources } = await fetchAllMatches({
+  const snapshot = await fetchAllMatches({
     now,
     ...feed,
   });
-  return refreshPickSettlementFromMatches(pick, all, sources, now);
+  return settlePendingAgainstSnapshot(pick, snapshot, now, feed);
 }
