@@ -1,5 +1,6 @@
 import {
   applyLoss,
+  applyPending,
   applyPush,
   applySkip,
   applyWin,
@@ -25,12 +26,12 @@ export function applyHourlyResult(
   }
 
   if (data.status === "pending") {
-    return {
-      ...state,
-      currentHourKey: hourKey,
-      currentPick: data.pick,
-      pickStatus: "pending",
-    };
+    return applyPending(
+      state,
+      { ...data.pick, hourKey: data.pick.hourKey || hourKey },
+      now,
+      data.message,
+    );
   }
 
   if (state.lastResolvedHourKey === hourKey && state.pickStatus === "resolved") {
@@ -70,8 +71,5 @@ export function applyHourlyResult(
     );
   }
 
-  return {
-    ...withPick,
-    pickStatus: "pending",
-  };
+  return applyPending(withPick, pick, now, data.message);
 }

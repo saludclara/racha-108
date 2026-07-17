@@ -42,6 +42,47 @@ export function isTiltActive(
   return now.getTime() < new Date(tiltGuardUntil).getTime();
 }
 
+/** Drop pending row for this cycle so settle/skip replaces it (no duplicates). */
+function prependHistory(
+  history: HistoryEntry[],
+  entry: HistoryEntry,
+): HistoryEntry[] {
+  const rest = history.filter(
+    (h) => !(h.hourKey === entry.hourKey && h.outcome === "pending"),
+  );
+  return [entry, ...rest];
+}
+
+/** Record the live pick in historial as soon as it is chosen. */
+export function applyPending(
+  state: AppState,
+  pick: ScoredPick,
+  now = new Date(),
+  note?: string,
+): AppState {
+  const entry: HistoryEntry = {
+    id: `pending-${pick.hourKey}`,
+    hourKey: pick.hourKey,
+    at: now.toISOString(),
+    outcome: "pending",
+    stake: state.hotStack,
+    odds: pick.odds,
+    marketLabel: pick.marketLabel,
+    matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
+    score: pick.totalScore,
+    layers: pick.layers,
+    note: note ?? "En juego · HotStack a riesgo",
+  };
+
+  return {
+    ...state,
+    currentHourKey: pick.hourKey,
+    currentPick: pick,
+    pickStatus: "pending",
+    history: prependHistory(state.history, entry),
+  };
+}
+
 export function applyWin(
   state: AppState,
   pick: ScoredPick,
@@ -90,7 +131,7 @@ export function applyWin(
     vault: newVault,
     streak: newStreak,
     bestStreak: Math.max(state.bestStreak, newStreak),
-    history: [entry, ...state.history],
+    history: prependHistory(state.history, entry),
     vaultLedger: deposit
       ? [deposit, ...state.vaultLedger]
       : state.vaultLedger,
@@ -131,7 +172,7 @@ export function applyLoss(
     hotStack: STAKE_BASE,
     streak: 0,
     tiltGuardUntil: tiltUntil.toISOString(),
-    history: [entry, ...state.history],
+    history: prependHistory(state.history, entry),
     pickStatus: "resolved",
     lastResolvedHourKey: pick.hourKey,
     currentPick: pick,
@@ -155,7 +196,7 @@ export function applySkip(
 
   return {
     ...state,
-    history: [entry, ...state.history],
+    history: prependHistory(state.history, entry),
     pickStatus: "skipped",
     lastResolvedHourKey: hourKey,
     currentPick: null,
@@ -189,7 +230,7 @@ export function applyPush(
 
   return {
     ...state,
-    history: [entry, ...state.history],
+    history: prependHistory(state.history, entry),
     pickStatus: "resolved",
     lastResolvedHourKey: pick.hourKey,
     currentPick: pick,
