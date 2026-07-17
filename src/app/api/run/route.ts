@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   const denied =
     guardBrowserOrCron(req) ??
     guardJsonBody(req) ??
-    guardRateLimit(req, "run-create", 5, 15 * 60_000);
+    guardRateLimit(req, "run-create", 30, 15 * 60_000);
   if (denied) return denied;
 
   let body: unknown = {};

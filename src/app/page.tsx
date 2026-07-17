@@ -6,8 +6,15 @@ import { STREAK_GOAL, formatBetWhen } from "@/lib/engine";
 import { useApp } from "@/lib/store";
 
 export default function HomePage() {
-  const { state, ready, tiltActive, threshold, apiMessage, matchCount } =
-    useApp();
+  const {
+    state,
+    ready,
+    tiltActive,
+    threshold,
+    apiMessage,
+    matchCount,
+    durableEnabled,
+  } = useApp();
 
   if (!ready) {
     return (
@@ -34,9 +41,21 @@ export default function HomePage() {
       </header>
 
       <section className="ios-card p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-[13px] text-[var(--muted)]">Próxima decisión</p>
-          <span className="pill pill-auto">1h 11m 11s</span>
+          <span className="flex items-center gap-1.5">
+            <span
+              className="pill"
+              style={
+                durableEnabled
+                  ? { background: "rgba(52,199,89,.15)", color: "var(--ios-green)" }
+                  : undefined
+              }
+            >
+              {durableEnabled ? "Nube ON" : "Solo local"}
+            </span>
+            <span className="pill pill-auto">1h 11m 11s</span>
+          </span>
         </div>
         <Countdown />
         <p className="mt-2 text-[13px] text-[var(--muted)]">

@@ -35,10 +35,20 @@ export default function SettingsPage() {
 
       <div className="ios-inset divide-y divide-[var(--line)]">
         <div className="px-4 py-3">
-          <p className="text-[13px] text-[var(--muted)]">Link secreto</p>
+          <p className="text-[13px] text-[var(--muted)]">Nube automática</p>
           {durableEnabled && shareUrl ? (
             <>
-              <p className="mt-1 break-all text-[14px] leading-snug">{shareUrl}</p>
+              <p className="mt-1 text-[15px]" style={{ color: "var(--ios-green)" }}>
+                Activa · picks aunque cierres la app
+              </p>
+              <p className="mt-2 text-[13px] text-[var(--muted)]">
+                Tu racha se guarda sola en la nube. El cron avanza cada ~15 min
+                sin que copies nada. El link de abajo es solo backup / para
+                compartir.
+              </p>
+              <p className="mt-3 break-all text-[13px] leading-snug text-[var(--muted)]">
+                {shareUrl}
+              </p>
               <button
                 type="button"
                 className="btn btn-ghost mt-3 w-full"
@@ -46,18 +56,13 @@ export default function SettingsPage() {
                   void navigator.clipboard.writeText(shareUrl);
                 }}
               >
-                Copiar link
+                Copiar link de backup
               </button>
-              <p className="mt-2 text-[13px] text-[var(--muted)]">
-                Quien tenga este link ve tu racha. Si lo perdés, no hay
-                recuperación. Con link activo, un cron externo puede avanzar
-                picks cada ~15 min aunque la app esté cerrada.
-              </p>
             </>
           ) : (
             <p className="mt-1 text-[15px] text-[var(--muted)]">
-              Persistencia en la nube no configurada · el estado queda solo en
-              este dispositivo.
+              Conectando a la nube… Si no prende, revisá Supabase en el
+              servidor. Sin nube, al cerrar la app se pausan los picks.
             </p>
           )}
         </div>

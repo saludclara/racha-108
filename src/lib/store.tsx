@@ -27,9 +27,21 @@ import type { SourceStatus } from "@/lib/data/providers/types";
 
 const STORAGE_KEY = "racha-108-state-v4-real";
 const RUN_ID_KEY = "racha-108-run-id";
+const RUN_COOKIE = "racha_run";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REMOTE_SAVE_DEBOUNCE_MS = 500;
+
+type CloudBoot = {
+  durable: boolean;
+  runId: string | null;
+  updatedAt: string | null;
+  state: AppState;
+  cloudConfigured: boolean;
+};
+
+/** One shared bootstrap — survives React Strict Mode double-mount. */
+let cloudBootstrapPromise: Promise<CloudBoot> | null = null;
 
 type AppContextValue = {
   state: AppState;
@@ -69,17 +81,29 @@ function saveLocalState(state: AppState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function readCookieRunId(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie
+    .split(";")
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${RUN_COOKIE}=`));
+  const v = match?.slice(RUN_COOKIE.length + 1)?.trim();
+  return v && UUID_RE.test(v) ? v : null;
+}
+
 function readStoredRunId(): string | null {
   if (typeof window === "undefined") return null;
   const fromUrl = new URLSearchParams(window.location.search).get("run")?.trim();
   if (fromUrl && UUID_RE.test(fromUrl)) return fromUrl;
   const fromLs = localStorage.getItem(RUN_ID_KEY)?.trim();
   if (fromLs && UUID_RE.test(fromLs)) return fromLs;
-  return null;
+  return readCookieRunId();
 }
 
 function persistRunId(id: string) {
   localStorage.setItem(RUN_ID_KEY, id);
+  // Backup if localStorage is cleared but cookies remain
+  document.cookie = `${RUN_COOKIE}=${id}; path=/; max-age=31536000; SameSite=Lax`;
   const url = new URL(window.location.href);
   if (url.searchParams.get("run") !== id) {
     url.searchParams.set("run", id);
@@ -89,6 +113,7 @@ function persistRunId(id: string) {
 
 function clearRunId() {
   localStorage.removeItem(RUN_ID_KEY);
+  document.cookie = `${RUN_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
   const url = new URL(window.location.href);
   if (url.searchParams.has("run")) {
     url.searchParams.delete("run");
@@ -107,16 +132,78 @@ function buildShareUrl(runId: string): string {
 
 type RunPayload = { id: string; state: AppState; updatedAt: string };
 
-async function apiCreateRun(state: AppState): Promise<RunPayload | null> {
+async function apiCreateRun(state: AppState): Promise<RunPayload | null | "unconfigured"> {
   const res = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ state }),
     cache: "no-store",
   });
-  if (res.status === 503) return null;
+  if (res.status === 503) return "unconfigured";
   if (!res.ok) throw new Error(`create run ${res.status}`);
   return (await res.json()) as RunPayload;
+}
+
+/** Auto cloud sync — no need to copy any link for closed-tab cron picks. */
+async function bootstrapCloud(local: AppState): Promise<CloudBoot> {
+  if (!cloudBootstrapPromise) {
+    cloudBootstrapPromise = (async (): Promise<CloudBoot> => {
+      const existingId = readStoredRunId();
+      if (existingId) {
+        try {
+          const remote = await apiLoadRun(existingId);
+          if (remote) {
+            persistRunId(remote.id);
+            return {
+              durable: true,
+              runId: remote.id,
+              updatedAt: remote.updatedAt,
+              state: remote.state,
+              cloudConfigured: true,
+            };
+          }
+        } catch {
+          // fall through to create/retry
+        }
+      }
+
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          const created = await apiCreateRun(local);
+          if (created === "unconfigured") {
+            return {
+              durable: false,
+              runId: null,
+              updatedAt: null,
+              state: local,
+              cloudConfigured: false,
+            };
+          }
+          if (created) {
+            persistRunId(created.id);
+            return {
+              durable: true,
+              runId: created.id,
+              updatedAt: created.updatedAt,
+              state: created.state,
+              cloudConfigured: true,
+            };
+          }
+        } catch {
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+
+      return {
+        durable: false,
+        runId: null,
+        updatedAt: null,
+        state: local,
+        cloudConfigured: true,
+      };
+    })();
+  }
+  return cloudBootstrapPromise;
 }
 
 async function apiLoadRun(id: string): Promise<RunPayload | null> {
@@ -240,68 +327,77 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [runId],
   );
 
-  // Bootstrap: local cache → remote run (URL / stored id / create+migrate)
+  // Auto cloud: create/load durable run without user copying any link
   useEffect(() => {
     if (!hydrated || bootstrappedRef.current) return;
     bootstrappedRef.current = true;
 
     let cancelled = false;
+    const local = loadLocalState();
 
-    (async () => {
-      const local = loadLocalState();
-      const existingId = readStoredRunId();
-
-      try {
-        if (existingId) {
-          const remote = await apiLoadRun(existingId);
-          if (cancelled) return;
-          if (remote) {
-            persistRunId(remote.id);
-            runIdRef.current = remote.id;
-            updatedAtRef.current = remote.updatedAt;
-            setRunId(remote.id);
-            setDurableEnabled(true);
-            setState(remote.state);
-            saveLocalState(remote.state);
-            setDidLoad(true);
-            return;
-          }
-          // Stale id or 503 → keep local and try create if configured
-        }
-
-        const created = await apiCreateRun(local);
+    void bootstrapCloud(local)
+      .then((boot) => {
         if (cancelled) return;
-        if (created) {
-          persistRunId(created.id);
-          runIdRef.current = created.id;
-          updatedAtRef.current = created.updatedAt;
-          setRunId(created.id);
+        if (boot.durable && boot.runId) {
+          runIdRef.current = boot.runId;
+          updatedAtRef.current = boot.updatedAt;
+          setRunId(boot.runId);
           setDurableEnabled(true);
-          setState(created.state);
-          saveLocalState(created.state);
+          setState(boot.state);
+          saveLocalState(boot.state);
         } else {
           setDurableEnabled(false);
-          setState(local);
-          saveLocalState(local);
+          setState(boot.state);
+          saveLocalState(boot.state);
+          if (boot.cloudConfigured) {
+            setApiMessage(
+              "Reintentando nube… para picks con la app cerrada",
+            );
+          }
         }
-      } catch (err) {
+        setDidLoad(true);
+      })
+      .catch((err) => {
         console.error(err);
         if (cancelled) return;
         setDurableEnabled(false);
         setState(local);
         saveLocalState(local);
-      } finally {
-        if (!cancelled) setDidLoad(true);
-      }
-    })();
+        setDidLoad(true);
+      });
 
     return () => {
       cancelled = true;
-      // React Strict Mode remounts effects in dev; reset so bootstrap can
-      // run again (otherwise ready stays false forever with "Cargando…").
-      bootstrappedRef.current = false;
     };
   }, [hydrated]);
+
+  // If cloud create failed once, keep retrying (cron needs a run id)
+  useEffect(() => {
+    if (!didLoad || durableEnabled) return;
+    let cancelled = false;
+
+    const tryAgain = () => {
+      cloudBootstrapPromise = null;
+      const local = loadLocalState();
+      void bootstrapCloud(local).then((boot) => {
+        if (cancelled || !boot.durable || !boot.runId) return;
+        runIdRef.current = boot.runId;
+        updatedAtRef.current = boot.updatedAt;
+        setRunId(boot.runId);
+        setDurableEnabled(true);
+        setState(boot.state);
+        saveLocalState(boot.state);
+        setApiMessage("Nube activa · picks aunque cierres la app");
+      });
+    };
+
+    const id = window.setInterval(tryAgain, 20_000);
+    tryAgain();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [didLoad, durableEnabled]);
 
   // Local + debounced remote persist
   useEffect(() => {
@@ -481,28 +577,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearRunId();
       runIdRef.current = null;
       updatedAtRef.current = null;
+      cloudBootstrapPromise = null;
       setRunId(null);
+      setDurableEnabled(false);
 
       const fresh = createInitialState();
       setState(fresh);
       saveLocalState(fresh);
 
       try {
-        const created = await apiCreateRun(fresh);
-        if (created) {
-          persistRunId(created.id);
-          runIdRef.current = created.id;
-          updatedAtRef.current = created.updatedAt;
-          setRunId(created.id);
+        const boot = await bootstrapCloud(fresh);
+        if (boot.durable && boot.runId) {
+          runIdRef.current = boot.runId;
+          updatedAtRef.current = boot.updatedAt;
+          setRunId(boot.runId);
           setDurableEnabled(true);
-          setState(created.state);
-          saveLocalState(created.state);
-        } else {
-          setDurableEnabled(false);
+          setState(boot.state);
+          saveLocalState(boot.state);
         }
       } catch (err) {
         console.error(err);
-        setDurableEnabled(false);
       }
 
       setTick((t) => t + 1);
