@@ -8,5 +8,6 @@ export * from "./schedule";
 export * from "./model";
 export * from "./numerology";
 export * from "./score";
+export * from "./metrics";
 export * from "./settle";
 

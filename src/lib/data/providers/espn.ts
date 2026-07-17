@@ -1,6 +1,9 @@
 import { CACHE_TTL, withCache } from "@/lib/data/cache";
 import { canonicalIdFor } from "@/lib/data/merge";
-import { buildModelOdds, proxyTeamStats } from "@/lib/data/odds-model";
+import {
+  buildModelOdds,
+  buildTeamStatsFromForm,
+} from "@/lib/data/odds-model";
 import type { MatchCandidate, TeamStats } from "@/lib/engine/types";
 import type { MatchProvider, ProviderResult } from "./types";
 
@@ -93,6 +96,8 @@ type EspnStatus = {
     completed?: boolean;
     name?: string;
     description?: string;
+    detail?: string;
+    shortDetail?: string;
   };
 };
 
@@ -139,7 +144,7 @@ function statsFromCompetitor(c: EspnCompetitor): TeamStats {
   );
   const played = Math.max(1, rec.w + rec.d + rec.l);
   const winRate = rec.w / played;
-  return proxyTeamStats(c.team.displayName, {
+  return buildTeamStatsFromForm(c.team.displayName, {
     form: formToArray(c.form),
     winRate,
   });
@@ -190,10 +195,14 @@ function eventToCandidate(
     awayC.score != null && awayC.score !== ""
       ? Number(awayC.score)
       : undefined;
+  const detail = st?.type?.detail ?? st?.type?.description ?? "";
+  const minuteMatch = /(\d+)\s*'/.exec(String(detail));
+  const minute = minuteMatch ? Number(minuteMatch[1]) : undefined;
 
   const kickoffIso = event.date ?? competition?.date;
   if (!kickoffIso) return null;
   const kickoff = new Date(kickoffIso);
+  const modeled = buildModelOdds(home, away, leagueName);
   const match: MatchCandidate = {
     id: `espn-${event.id}`,
     externalId: event.id,
@@ -202,11 +211,13 @@ function eventToCandidate(
     league: leagueName,
     home,
     away,
-    odds: buildModelOdds(home, away),
+    odds: modeled.odds,
+    oddsSource: modeled.oddsSource,
     matchday: kickoff.getUTCDate(),
     status,
     homeScore: Number.isFinite(homeScore) ? homeScore : undefined,
     awayScore: Number.isFinite(awayScore) ? awayScore : undefined,
+    minute: Number.isFinite(minute) ? minute : undefined,
     provider: "espn",
     sport: "football",
     providers: { espn: event.id },

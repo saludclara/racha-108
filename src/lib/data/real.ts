@@ -4,7 +4,7 @@ import {
 } from "@/lib/data/providers/registry";
 import type { SourceStatus } from "@/lib/data/providers/types";
 import { CYCLE_MS } from "@/lib/engine/schedule";
-import { pickBestForHour } from "@/lib/engine/score";
+import { pickBestForHour, type PickBestOptions } from "@/lib/engine/score";
 import { settleFromScores, settlePick } from "@/lib/engine/settle";
 import type { MatchCandidate, ScoredPick } from "@/lib/engine/types";
 
@@ -298,6 +298,8 @@ export type MatchFeedSnapshot = {
   sources: SourceStatus[];
 };
 
+export type HourlyPickOpts = PickBestOptions;
+
 /** Pure pick builder over an already-fetched feed (cron reuses one snapshot). */
 export function buildHourlyPickFromMatches(
   hourKey: string,
@@ -305,6 +307,7 @@ export function buildHourlyPickFromMatches(
   all: MatchCandidate[],
   sources: SourceStatus[],
   now = new Date(),
+  pickOpts: HourlyPickOpts = {},
 ): HourlyPickResponse {
   const { pool, tier } = candidatePoolForCycle(all, now);
 
@@ -325,9 +328,9 @@ export function buildHourlyPickFromMatches(
     };
   }
 
-  const pick = pickBestForHour(pool, hourKey, threshold, now, {
-    guarantee: true,
-  });
+  // Shadow week default: guarantee on + log EV SKIP (see pickBestForHour).
+  // Set MOTOR_GUARANTEE=0 to enable real quality SKIP.
+  const pick = pickBestForHour(pool, hourKey, threshold, now, pickOpts);
 
   if (!pick) {
     return {
@@ -339,7 +342,7 @@ export function buildHourlyPickFromMatches(
       matchCount: pool.length,
       sources,
       message:
-        "Hay partidos, pero ninguno tiene mercado grind con cuotas válidas.",
+        "SKIP de calidad · sin edge/prob suficientes en la ventana liquidable. HotStack intacto.",
       fetchedAt: now.toISOString(),
     };
   }
@@ -359,6 +362,12 @@ export function buildHourlyPickFromMatches(
 
   const tierNote =
     tier === "settleable" ? "ventana liquidable" : "kickoff ≤6h";
+  const shadowBit =
+    refreshed.shadowWouldSkip === true
+      ? " · shadow: EV SKIP"
+      : refreshed.shadowNote?.startsWith("Shadow: EV alt")
+        ? " · shadow: EV alt"
+        : "";
 
   return {
     ok: true,
@@ -368,7 +377,7 @@ export function buildHourlyPickFromMatches(
     settle: null,
     matchCount: pool.length,
     sources,
-    message: `Pick del ciclo · ${tierNote} · ${fresh.status === "inplay" ? "en juego" : "kickoff"} ${new Date(fresh.kickoffUtc ?? fresh.kickoff).toLocaleString("es-AU")}`,
+    message: `Pick del ciclo · ${tierNote} · ${fresh.status === "inplay" ? "en juego" : "kickoff"} ${new Date(fresh.kickoffUtc ?? fresh.kickoff).toLocaleString("es-AU")}${shadowBit}`,
     fetchedAt: now.toISOString(),
   };
 }
@@ -378,12 +387,20 @@ export async function buildHourlyPick(
   threshold: number,
   now = new Date(),
   feed: FeedOptions = {},
+  pickOpts: HourlyPickOpts = {},
 ): Promise<HourlyPickResponse> {
   const { matches: all, sources } = await fetchAllMatches({
     now,
     ...feed,
   });
-  return buildHourlyPickFromMatches(hourKey, threshold, all, sources, now);
+  return buildHourlyPickFromMatches(
+    hourKey,
+    threshold,
+    all,
+    sources,
+    now,
+    pickOpts,
+  );
 }
 
 /** Pure settlement refresh over an already-fetched feed. */

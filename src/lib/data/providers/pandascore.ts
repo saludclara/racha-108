@@ -1,6 +1,9 @@
 import { CACHE_TTL, withCache } from "@/lib/data/cache";
 import { canonicalIdFor } from "@/lib/data/merge";
-import { buildModelOdds, proxyTeamStats } from "@/lib/data/odds-model";
+import {
+  buildModelOdds,
+  buildTeamStatsFromForm,
+} from "@/lib/data/odds-model";
 import type { MatchCandidate } from "@/lib/engine/types";
 import type { FetchOptions, MatchProvider, ProviderResult } from "./types";
 
@@ -42,7 +45,67 @@ function teamName(opps: PsOpponent[], index: number): string {
   return o?.name || o?.acronym || `Team ${index + 1}`;
 }
 
-function toCandidate(row: PsMatch): MatchCandidate | null {
+function formAvg(form: number[]): number {
+  if (!form.length) return 0.5;
+  let w = 0;
+  let s = 0;
+  form.forEach((v, i) => {
+    const weight = i + 1;
+    s += v * weight;
+    w += weight;
+  });
+  return s / Math.max(1, w);
+}
+
+/** Win/loss form from finished rows already in the fetch batch. */
+function formByTeamName(rows: PsMatch[]): Map<string, number[]> {
+  const map = new Map<string, number[]>();
+  const push = (name: string, pts: number) => {
+    const list = map.get(name) ?? [];
+    list.push(pts);
+    map.set(name, list.slice(-10));
+  };
+
+  for (const row of rows) {
+    if (mapStatus(row.status) !== "finished") continue;
+    const opps = row.opponents ?? [];
+    if (opps.length < 2) continue;
+    const homeName = teamName(opps, 0);
+    const awayName = teamName(opps, 1);
+    const homeId = opps[0]?.opponent?.id;
+    const awayId = opps[1]?.opponent?.id;
+    if (row.winner_id != null && homeId != null && awayId != null) {
+      if (row.winner_id === homeId) {
+        push(homeName, 1);
+        push(awayName, 0);
+      } else if (row.winner_id === awayId) {
+        push(homeName, 0);
+        push(awayName, 1);
+      }
+      continue;
+    }
+    if (!row.results?.length || homeId == null || awayId == null) continue;
+    const hs = row.results.find((r) => r.team_id === homeId)?.score;
+    const asx = row.results.find((r) => r.team_id === awayId)?.score;
+    if (hs == null || asx == null) continue;
+    if (hs > asx) {
+      push(homeName, 1);
+      push(awayName, 0);
+    } else if (hs < asx) {
+      push(homeName, 0);
+      push(awayName, 1);
+    } else {
+      push(homeName, 0.5);
+      push(awayName, 0.5);
+    }
+  }
+  return map;
+}
+
+function toCandidate(
+  row: PsMatch,
+  formMap: Map<string, number[]>,
+): MatchCandidate | null {
   const opps = row.opponents ?? [];
   if (opps.length < 2) return null;
   const kickoff = row.begin_at || row.scheduled_at;
@@ -50,8 +113,16 @@ function toCandidate(row: PsMatch): MatchCandidate | null {
 
   const homeName = teamName(opps, 0);
   const awayName = teamName(opps, 1);
-  const home = proxyTeamStats(homeName, { winRate: 0.5 });
-  const away = proxyTeamStats(awayName, { winRate: 0.48 });
+  const homeForm = formMap.get(homeName);
+  const awayForm = formMap.get(awayName);
+  const home = buildTeamStatsFromForm(homeName, {
+    form: homeForm?.length ? homeForm : undefined,
+    winRate: homeForm?.length ? formAvg(homeForm) : 0.5,
+  });
+  const away = buildTeamStatsFromForm(awayName, {
+    form: awayForm?.length ? awayForm : undefined,
+    winRate: awayForm?.length ? formAvg(awayForm) : 0.48,
+  });
 
   const league =
     row.league?.name ||
@@ -69,7 +140,7 @@ function toCandidate(row: PsMatch): MatchCandidate | null {
   }
 
   // Esports: reuse home_win as match-winner grind market via model odds
-  const odds = buildModelOdds(home, away);
+  const modeled = buildModelOdds(home, away, league);
 
   const match: MatchCandidate = {
     id: `ps-${row.id}`,
@@ -79,7 +150,8 @@ function toCandidate(row: PsMatch): MatchCandidate | null {
     league: `${row.videogame?.name ? `${row.videogame.name} · ` : ""}${league}`,
     home,
     away,
-    odds,
+    odds: modeled.odds,
+    oddsSource: modeled.oddsSource,
     matchday: new Date(kickoff).getUTCDate(),
     status: mapStatus(row.status),
     homeScore,
@@ -99,10 +171,10 @@ async function fetchUpcoming(token: string): Promise<MatchCandidate[]> {
     "/dota2/matches/upcoming?per_page=50",
     "/valorant/matches/upcoming?per_page=50",
     "/matches/running?per_page=40",
+    "/matches/past?per_page=40",
   ];
 
-  const seen = new Set<string>();
-  const out: MatchCandidate[] = [];
+  const allRows: PsMatch[] = [];
 
   await Promise.all(
     endpoints.map(async (path) => {
@@ -117,17 +189,25 @@ async function fetchUpcoming(token: string): Promise<MatchCandidate[]> {
         });
         if (!res.ok) return;
         const rows = (await res.json()) as PsMatch[];
-        for (const row of rows) {
-          const m = toCandidate(row);
-          if (!m || seen.has(m.id)) continue;
-          seen.add(m.id);
-          out.push(m);
-        }
+        allRows.push(...rows);
       } catch {
         // ignore endpoint failures
       }
     }),
   );
+
+  const formMap = formByTeamName(allRows);
+  const seen = new Set<string>();
+  const out: MatchCandidate[] = [];
+
+  for (const row of allRows) {
+    // Past board is only for form — do not offer finished as new picks
+    if (mapStatus(row.status) === "finished") continue;
+    const m = toCandidate(row, formMap);
+    if (!m || seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push(m);
+  }
 
   return out;
 }

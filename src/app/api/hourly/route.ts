@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildHourlyPick, refreshPickSettlement } from "@/lib/data/real";
 import type { SourceStatus } from "@/lib/data/providers/types";
-import type { ScoredPick } from "@/lib/engine/types";
+import type { HistoryEntry, ScoredPick } from "@/lib/engine/types";
 import {
   guardBrowserOrCron,
   guardJsonBody,
@@ -58,6 +58,47 @@ function withPublicSources<T extends { sources?: SourceStatus[] }>(data: T): T {
   return { ...data, sources: publicSources(data.sources) };
 }
 
+type CompactHist = Pick<
+  HistoryEntry,
+  "outcome" | "league" | "provider" | "edge" | "modelProb"
+>;
+
+function asHistory(raw: unknown): HistoryEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: HistoryEntry[] = [];
+  for (const row of raw.slice(0, 120)) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as CompactHist;
+    if (
+      r.outcome !== "win" &&
+      r.outcome !== "loss" &&
+      r.outcome !== "push" &&
+      r.outcome !== "skip" &&
+      r.outcome !== "pending"
+    ) {
+      continue;
+    }
+    out.push({
+      id: `wire-${out.length}`,
+      hourKey: "wire",
+      at: new Date(0).toISOString(),
+      outcome: r.outcome,
+      stake: 0,
+      league: typeof r.league === "string" ? r.league : undefined,
+      provider:
+        r.provider === "espn" ||
+        r.provider === "api-football" ||
+        r.provider === "odds-api" ||
+        r.provider === "pandascore"
+          ? r.provider
+          : undefined,
+      edge: typeof r.edge === "number" ? r.edge : undefined,
+      modelProb: typeof r.modelProb === "number" ? r.modelProb : undefined,
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 export async function GET(req: NextRequest) {
   const denied =
     guardBrowserOrCron(req) ?? guardRateLimit(req, "hourly-get", 30, 60_000);
@@ -65,6 +106,7 @@ export async function GET(req: NextRequest) {
 
   const hourKey = req.nextUrl.searchParams.get("hourKey");
   const threshold = Number(req.nextUrl.searchParams.get("threshold") ?? "82");
+  const tiltActive = parseBool(req.nextUrl.searchParams.get("tilt"), false);
 
   if (!hourKey) {
     return NextResponse.json(
@@ -79,6 +121,7 @@ export async function GET(req: NextRequest) {
       Number.isFinite(threshold) ? threshold : 82,
       new Date(),
       feedFromSearch(req),
+      { tiltActive },
     );
     return NextResponse.json(withPublicSources(data), {
       headers: { "Cache-Control": "no-store" },
@@ -104,29 +147,64 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = (await req.json()) as {
+      action?: "pick" | "refresh";
+      hourKey?: string;
+      threshold?: number;
+      tiltActive?: boolean;
+      history?: CompactHist[];
       pick?: ScoredPick;
       apiFootball?: boolean;
       oddsApi?: boolean;
       esports?: boolean;
     };
+
+    const feed = {
+      enableApiFootball: body.apiFootball !== false,
+      enableOddsApi: body.oddsApi !== false,
+      enableEsports: body.esports !== false,
+    };
+
+    // New-cycle pick with history (blacklist + tilt gates)
+    if (body.action === "pick" || (body.hourKey && !body.pick)) {
+      if (!body.hourKey) {
+        return NextResponse.json(
+          { ok: false, error: "hourKey required" },
+          { status: 400 },
+        );
+      }
+      const threshold =
+        typeof body.threshold === "number" && Number.isFinite(body.threshold)
+          ? body.threshold
+          : 82;
+      const data = await buildHourlyPick(
+        body.hourKey,
+        threshold,
+        new Date(),
+        feed,
+        {
+          tiltActive: body.tiltActive === true,
+          history: asHistory(body.history),
+        },
+      );
+      return NextResponse.json(withPublicSources(data), {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
     if (!body.pick) {
       return NextResponse.json(
         { ok: false, error: "pick required" },
         { status: 400 },
       );
     }
-    const data = await refreshPickSettlement(body.pick, new Date(), {
-      enableApiFootball: body.apiFootball !== false,
-      enableOddsApi: body.oddsApi !== false,
-      enableEsports: body.esports !== false,
-    });
+    const data = await refreshPickSettlement(body.pick, new Date(), feed);
     return NextResponse.json(withPublicSources(data), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
-    console.error("refresh settle failed", err);
+    console.error("hourly post failed", err);
     return NextResponse.json(
-      { ok: false, error: "Error refrescando resultado real" },
+      { ok: false, error: "Error en /api/hourly" },
       { status: 502 },
     );
   }

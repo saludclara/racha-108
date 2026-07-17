@@ -4,9 +4,11 @@ import {
   type AppSettings,
   type AppState,
   type BetOutcome,
+  type DataProvider,
   type HistoryEntry,
   type LayerScore,
   type MarketType,
+  type OddsSource,
   type ScoredPick,
   type VaultDeposit,
 } from "@/lib/engine";
@@ -116,6 +118,16 @@ function normalizePick(raw: unknown): ScoredPick | null {
   const id = optString(match.id, 160);
   if (!id) return null;
 
+  const oddsSourceRaw = raw.oddsSource;
+  const oddsSource: OddsSource =
+    oddsSourceRaw === "book" || oddsSourceRaw === "model"
+      ? oddsSourceRaw
+      : "model";
+
+  const matchOddsSource = isPlainObject(match.oddsSource)
+    ? (match.oddsSource as ScoredPick["match"]["oddsSource"])
+    : undefined;
+
   return {
     match: {
       id,
@@ -123,8 +135,8 @@ function normalizePick(raw: unknown): ScoredPick | null {
       league: optString(match.league, 120) || "Unknown",
       home: {
         name: homeName,
-        attack: finiteNumber(home.attack, 50, 0, 100),
-        defense: finiteNumber(home.defense, 50, 0, 100),
+        attack: finiteNumber(home.attack, 1, 0, 100),
+        defense: finiteNumber(home.defense, 1, 0, 100),
         form: Array.isArray(home.form)
           ? home.form.filter((n): n is number => typeof n === "number").slice(0, 10)
           : [],
@@ -134,12 +146,12 @@ function normalizePick(raw: unknown): ScoredPick | null {
         possession: finiteNumber(home.possession, 50, 0, 100),
         restDays: finiteNumber(home.restDays, 3, 0, 30),
         injuries: finiteNumber(home.injuries, 0, 0, 30),
-        motivation: finiteNumber(home.motivation, 50, 0, 100),
+        motivation: finiteNumber(home.motivation, 0.5, 0, 100),
       },
       away: {
         name: awayName,
-        attack: finiteNumber(away.attack, 50, 0, 100),
-        defense: finiteNumber(away.defense, 50, 0, 100),
+        attack: finiteNumber(away.attack, 1, 0, 100),
+        defense: finiteNumber(away.defense, 1, 0, 100),
         form: Array.isArray(away.form)
           ? away.form.filter((n): n is number => typeof n === "number").slice(0, 10)
           : [],
@@ -149,11 +161,12 @@ function normalizePick(raw: unknown): ScoredPick | null {
         possession: finiteNumber(away.possession, 50, 0, 100),
         restDays: finiteNumber(away.restDays, 3, 0, 30),
         injuries: finiteNumber(away.injuries, 0, 0, 30),
-        motivation: finiteNumber(away.motivation, 50, 0, 100),
+        motivation: finiteNumber(away.motivation, 0.5, 0, 100),
       },
       odds: isPlainObject(match.odds)
         ? (match.odds as ScoredPick["match"]["odds"])
         : {},
+      oddsSource: matchOddsSource,
       matchday: finiteNumber(match.matchday, 1, 1, 50),
       externalId: optString(match.externalId, 80) ?? undefined,
       kickoffUtc: optString(match.kickoffUtc, 64) ?? undefined,
@@ -167,6 +180,7 @@ function normalizePick(raw: unknown): ScoredPick | null {
         typeof match.homeScore === "number" ? match.homeScore : undefined,
       awayScore:
         typeof match.awayScore === "number" ? match.awayScore : undefined,
+      minute: typeof match.minute === "number" ? match.minute : undefined,
       provider:
         match.provider === "espn" ||
         match.provider === "api-football" ||
@@ -183,16 +197,44 @@ function normalizePick(raw: unknown): ScoredPick | null {
         match.sport === "esports"
           ? match.sport
           : undefined,
+      providers: isPlainObject(match.providers)
+        ? (match.providers as ScoredPick["match"]["providers"])
+        : undefined,
+      canonicalId: optString(match.canonicalId, 160) ?? undefined,
     },
     market: market as MarketType,
     marketLabel: optString(raw.marketLabel, 80) || market,
     odds: finiteNumber(raw.odds, 1.1, 1.01, 5),
     modelProb: finiteNumber(raw.modelProb, 0.5, 0, 1),
     edge: finiteNumber(raw.edge, 0, -1, 1),
+    bookOdds: typeof raw.bookOdds === "number" ? raw.bookOdds : undefined,
+    oddsSource,
     totalScore: finiteNumber(raw.totalScore, 0, 0, 100),
     layers: normalizeLayers(raw.layers) ?? [],
     hourKey: optString(raw.hourKey, 80) || "",
+    shadowWouldSkip:
+      typeof raw.shadowWouldSkip === "boolean"
+        ? raw.shadowWouldSkip
+        : undefined,
+    shadowNote: optString(raw.shadowNote, 240) ?? undefined,
   };
+}
+
+function normalizeProvider(v: unknown): DataProvider | undefined {
+  if (
+    v === "espn" ||
+    v === "api-football" ||
+    v === "odds-api" ||
+    v === "pandascore"
+  ) {
+    return v;
+  }
+  return undefined;
+}
+
+function normalizeOddsSource(v: unknown): OddsSource | undefined {
+  if (v === "book" || v === "model") return v;
+  return undefined;
 }
 
 function normalizeHistory(raw: unknown): HistoryEntry[] {
@@ -223,6 +265,17 @@ function normalizeHistory(raw: unknown): HistoryEntry[] {
       score: typeof row.score === "number" ? row.score : undefined,
       layers: normalizeLayers(row.layers),
       note: optString(row.note, 240) ?? undefined,
+      modelProb: typeof row.modelProb === "number" ? row.modelProb : undefined,
+      edge: typeof row.edge === "number" ? row.edge : undefined,
+      bookOdds: typeof row.bookOdds === "number" ? row.bookOdds : undefined,
+      oddsSource: normalizeOddsSource(row.oddsSource),
+      provider: normalizeProvider(row.provider),
+      league: optString(row.league, 120) ?? undefined,
+      matchId: optString(row.matchId, 160) ?? undefined,
+      shadowWouldSkip:
+        typeof row.shadowWouldSkip === "boolean"
+          ? row.shadowWouldSkip
+          : undefined,
     });
   }
   return out;

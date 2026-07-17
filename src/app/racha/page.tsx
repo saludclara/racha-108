@@ -1,6 +1,11 @@
 "use client";
 
-import { STREAK_GOAL, formatBetWhen, type HistoryEntry } from "@/lib/engine";
+import {
+  STREAK_GOAL,
+  computeMotorMetrics,
+  formatBetWhen,
+  type HistoryEntry,
+} from "@/lib/engine";
 import { useApp } from "@/lib/store";
 
 function outcomePill(outcome: HistoryEntry["outcome"]): string {
@@ -16,11 +21,17 @@ function outcomeLabel(outcome: HistoryEntry["outcome"]): string {
   return outcome.toUpperCase();
 }
 
+function pct(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return `${(n * 100).toFixed(0)}%`;
+}
+
 export default function RachaPage() {
   const { state, ready } = useApp();
   if (!ready) return null;
 
   const slots = Array.from({ length: STREAK_GOAL }, (_, i) => i + 1);
+  const metrics = computeMotorMetrics(state.history, 50);
 
   // Backfill: open pick must appear even if an older client never wrote pending
   const rows: HistoryEntry[] = [...state.history];
@@ -45,6 +56,13 @@ export default function RachaPage() {
       matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
       score: pick.totalScore,
       note: "En juego · HotStack a riesgo",
+      modelProb: pick.modelProb,
+      edge: pick.edge,
+      bookOdds: pick.bookOdds,
+      oddsSource: pick.oddsSource,
+      provider: pick.match.provider,
+      league: pick.match.league,
+      matchId: pick.match.id,
     });
   }
 
@@ -76,6 +94,22 @@ export default function RachaPage() {
         </div>
       </div>
 
+      <div className="ios-card p-4">
+        <p className="text-[13px] text-[var(--muted)]">Hit-rate (últimos 50)</p>
+        <p
+          className="text-[28px] font-bold tracking-tight"
+          style={{ color: "var(--ios-blue)" }}
+        >
+          {pct(metrics.hitRate)}
+        </p>
+        <p className="mt-1 text-[13px] text-[var(--muted)]">
+          {metrics.wins}W / {metrics.losses}L · {metrics.skips} SKIP
+          {metrics.avgEdge != null
+            ? ` · edge ${(metrics.avgEdge * 100).toFixed(1)}pp`
+            : ""}
+        </p>
+      </div>
+
       <p className="section-label">Historial</p>
       <div className="ios-inset divide-y divide-[var(--line)]">
         {rows.length === 0 ? (
@@ -89,7 +123,9 @@ export default function RachaPage() {
                 <span className={`pill ${outcomePill(h.outcome)}`}>
                   {outcomeLabel(h.outcome)}
                 </span>
-                <span className="pill pill-auto">REAL</span>
+                <span className="pill pill-auto">
+                  {h.oddsSource === "book" ? "BOOK" : "REAL"}
+                </span>
                 <p className="truncate text-[15px] font-medium">
                   {h.matchLabel ?? h.note ?? "—"}
                 </p>
@@ -102,6 +138,12 @@ export default function RachaPage() {
                   ""}
                 {h.score != null ? ` · score ${h.score.toFixed(0)}` : ""}
                 {h.odds != null ? ` · @${h.odds.toFixed(2)}` : ""}
+                {h.modelProb != null
+                  ? ` · p ${(h.modelProb * 100).toFixed(0)}%`
+                  : ""}
+                {h.oddsSource === "book" && h.edge != null
+                  ? ` · edge ${(h.edge * 100).toFixed(1)}pp`
+                  : ""}
               </p>
               <p className="mt-1 text-[12px] text-[var(--muted)]">
                 {formatBetWhen(h.hourKey, h.at, state.settings.timezone)}

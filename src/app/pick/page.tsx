@@ -27,7 +27,7 @@ export default function PickPage() {
         </div>
         <h1 className="large-title mt-1">Apuesta del ciclo</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          1 pick por ciclo 1h 11m 11s (live / kickoff ≤6h) ·
+          1 pick por ciclo (live / kickoff ≤6h) · shadow EV en Motor/historial ·
           preferencia {threshold} · {matchCount} en feed
         </p>
         {apiMessage && (
@@ -39,9 +39,11 @@ export default function PickPage() {
 
       {skipped && (
         <div className="ios-card p-5">
-          <span className="pill pill-skip">SIN PICK</span>
+          <span className="pill pill-skip">SKIP</span>
           <p className="mt-3 text-[15px] text-[var(--muted)]">
-            {last?.note ?? apiMessage ?? "No hay mercado real elegible ahora."}
+            {last?.note ??
+              apiMessage ??
+              "SKIP de calidad · HotStack intacto este ciclo."}
           </p>
           <button type="button" className="btn btn-primary mt-4 w-full" onClick={refreshNow}>
             Reconsultar feed
@@ -112,7 +114,7 @@ export default function PickPage() {
             ).toLocaleString("es-AU", { timeZone: state.settings.timezone })}
           </p>
 
-          <div className="mt-4 grid grid-cols-3 gap-2">
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               ["Cuota", pick.odds.toFixed(2)],
               [
@@ -127,7 +129,13 @@ export default function PickPage() {
                       currency: "AUD",
                     }).format(state.hotStack),
               ],
-              ["Confianza", `${(pick.modelProb * 100).toFixed(1)}%`],
+              ["p_model", `${(pick.modelProb * 100).toFixed(1)}%`],
+              [
+                "edge",
+                pick.oddsSource === "book"
+                  ? `${pick.edge >= 0 ? "+" : ""}${(pick.edge * 100).toFixed(1)}pp`
+                  : "n/a",
+              ],
             ].map(([k, v]) => (
               <div key={k} className="rounded-xl bg-[var(--ios-fill-2)] p-3">
                 <p className="text-[11px] text-[var(--muted)]">{k}</p>
@@ -137,6 +145,10 @@ export default function PickPage() {
               </div>
             ))}
           </div>
+          <p className="mt-2 text-[12px] text-[var(--muted)]">
+            Odds: {pick.oddsSource === "book" ? "bookmaker" : "modelo (sin fingir edge)"}
+            {pick.bookOdds != null ? ` · book @${pick.bookOdds.toFixed(2)}` : ""}
+          </p>
 
           {resolved && last?.outcome === "win" && (
             <p className="mt-3 text-[14px] text-[var(--muted)]">

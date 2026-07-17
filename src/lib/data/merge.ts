@@ -66,8 +66,34 @@ function mergePair(a: MatchCandidate, b: MatchCandidate): MatchCandidate {
         ? other.awayScore
         : undefined;
 
-  // Overlay bookmaker odds when present (odds-api fills grind markets)
-  const odds = { ...base.odds, ...other.odds };
+  // Per-market: book odds always beat model-fabricated prices
+  const odds = { ...base.odds };
+  const oddsSource = { ...(base.oddsSource ?? {}) };
+  for (const [k, v] of Object.entries(other.odds ?? {})) {
+    const key = k as keyof typeof odds;
+    const otherSrc = other.oddsSource?.[key];
+    const baseSrc = oddsSource[key];
+    if (v == null) continue;
+    if (otherSrc === "book" || baseSrc !== "book") {
+      odds[key] = v;
+      if (otherSrc) oddsSource[key] = otherSrc;
+    }
+  }
+  for (const [k, v] of Object.entries(base.oddsSource ?? {})) {
+    const key = k as keyof typeof oddsSource;
+    if (v === "book") oddsSource[key] = "book";
+  }
+
+  const minute =
+    base.minute != null
+      ? base.minute
+      : other.minute != null
+        ? other.minute
+        : undefined;
+
+  // Prefer form arrays that aren't flat 0.5 placeholders
+  const formRichness = (f: number[]) =>
+    f.reduce((s, x) => s + Math.abs(x - 0.5), 0);
 
   return {
     ...base,
@@ -77,14 +103,23 @@ function mergePair(a: MatchCandidate, b: MatchCandidate): MatchCandidate {
     homeScore,
     awayScore,
     odds,
-    // Prefer richer injuries / rest if other looks more informed
+    oddsSource,
+    minute,
     home: {
       ...base.home,
+      form:
+        formRichness(other.home.form) > formRichness(base.home.form)
+          ? other.home.form
+          : base.home.form,
       injuries: Math.min(base.home.injuries, other.home.injuries),
       restDays: Math.max(base.home.restDays, other.home.restDays),
     },
     away: {
       ...base.away,
+      form:
+        formRichness(other.away.form) > formRichness(base.away.form)
+          ? other.away.form
+          : base.away.form,
       injuries: Math.min(base.away.injuries, other.away.injuries),
       restDays: Math.max(base.away.restDays, other.away.restDays),
     },

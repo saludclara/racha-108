@@ -29,10 +29,21 @@ export async function withCache<T>(
   return value;
 }
 
+/**
+ * Budget-aware TTLs (Motor EV v2):
+ * - live boards short (scores/minute)
+ * - book odds 2–5 min
+ * - AF long (free ~100 req/day)
+ * - standings reserved for S2b
+ */
 export const CACHE_TTL = {
-  espn: 10 * 60_000,
-  /** Free plan ~100 req/day — long TTL; window cached as one key. */
+  /** Scoreboard / live — keep minute+score fresh */
+  espn: 45_000,
+  /** Free plan ~100 req/day — one window key */
   apiFootball: 30 * 60_000,
-  oddsApi: 45 * 60_000,
-  pandascore: 15 * 60_000,
+  /** Book prices — 3 min */
+  oddsApi: 3 * 60_000,
+  pandascore: 2 * 60_000,
+  /** Future standings / H2H */
+  standings: 6 * 3600_000,
 } as const;

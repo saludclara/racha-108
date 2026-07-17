@@ -1,6 +1,9 @@
 import { CACHE_TTL, withCache } from "@/lib/data/cache";
 import { canonicalIdFor } from "@/lib/data/merge";
-import { proxyTeamStats } from "@/lib/data/odds-model";
+import {
+  buildTeamStatsFromForm,
+  markBookOdds,
+} from "@/lib/data/odds-model";
 import type { MarketType, MatchCandidate } from "@/lib/engine/types";
 import type { FetchOptions, MatchProvider, ProviderResult } from "./types";
 
@@ -56,8 +59,8 @@ function toCandidate(event: OddsEvent): MatchCandidate | null {
   const grind = extractGrindOdds(event);
   if (!Object.keys(grind).length) return null;
 
-  const home = proxyTeamStats(event.home_team, { winRate: 0.5 });
-  const away = proxyTeamStats(event.away_team, { winRate: 0.45 });
+  const home = buildTeamStatsFromForm(event.home_team, { winRate: 0.5 });
+  const away = buildTeamStatsFromForm(event.away_team, { winRate: 0.45 });
   const match: MatchCandidate = {
     id: `odds-${event.id}`,
     externalId: event.id,
@@ -67,6 +70,7 @@ function toCandidate(event: OddsEvent): MatchCandidate | null {
     home,
     away,
     odds: grind,
+    oddsSource: markBookOdds(grind),
     matchday: new Date(event.commence_time).getUTCDate(),
     status: "scheduled",
     provider: "odds-api",

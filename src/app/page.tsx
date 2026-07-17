@@ -59,9 +59,9 @@ export default function HomePage() {
         </div>
         <Countdown />
         <p className="mt-2 text-[13px] text-[var(--muted)]">
-          Cada ciclo (1h 11m 11s) hace 1 pick (live o kickoff ≤6h). Se liquida
-          con marcador oficial; si el feed no cierra a tiempo, push y HotStack
-          libre.
+          Cada ciclo (1h 11m 11s) elige 1 pick en ventana liquidable (shadow EV
+          en historial). Se liquida con marcador oficial; si el feed no cierra a
+          tiempo, push y HotStack libre.
         </p>
         {apiMessage && (
           <p className="mt-2 text-[13px]" style={{ color: "var(--ios-blue)" }}>

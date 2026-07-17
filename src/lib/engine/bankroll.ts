@@ -53,6 +53,19 @@ function prependHistory(
   return [entry, ...rest];
 }
 
+function pickTelemetry(pick: ScoredPick): Partial<HistoryEntry> {
+  return {
+    modelProb: pick.modelProb,
+    edge: pick.edge,
+    bookOdds: pick.bookOdds,
+    oddsSource: pick.oddsSource,
+    provider: pick.match.provider,
+    league: pick.match.league,
+    matchId: pick.match.id,
+    shadowWouldSkip: pick.shadowWouldSkip,
+  };
+}
+
 /** Record the live pick in historial as soon as it is chosen. */
 export function applyPending(
   state: AppState,
@@ -72,6 +85,7 @@ export function applyPending(
     score: pick.totalScore,
     layers: pick.layers,
     note: note ?? "En juego · HotStack a riesgo",
+    ...pickTelemetry(pick),
   };
 
   return {
@@ -123,6 +137,7 @@ export function applyWin(
     matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
     score: pick.totalScore,
     layers: pick.layers,
+    ...pickTelemetry(pick),
   };
 
   return {
@@ -164,7 +179,8 @@ export function applyLoss(
     matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
     score: pick.totalScore,
     layers: pick.layers,
-    note: `Loss protocol: HotStack reset. Vault intacto. Tilt guard ${TILT_GUARD_HOURS}h.`,
+    note: `Loss protocol: HotStack reset. Vault intacto. Tilt ${TILT_GUARD_HOURS}h (+score y gates EV).`,
+    ...pickTelemetry(pick),
   };
 
   return {
@@ -226,6 +242,7 @@ export function applyPush(
     score: pick.totalScore,
     layers: pick.layers,
     note,
+    ...pickTelemetry(pick),
   };
 
   return {

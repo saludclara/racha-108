@@ -1,6 +1,9 @@
 import { CACHE_TTL, withCache } from "@/lib/data/cache";
 import { canonicalIdFor } from "@/lib/data/merge";
-import { buildModelOdds, proxyTeamStats } from "@/lib/data/odds-model";
+import {
+  buildModelOdds,
+  buildTeamStatsFromForm,
+} from "@/lib/data/odds-model";
 import type { MatchCandidate } from "@/lib/engine/types";
 import type { FetchOptions, MatchProvider, ProviderResult } from "./types";
 
@@ -14,7 +17,7 @@ type AfFixture = {
   fixture: {
     id: number;
     date: string;
-    status: { short: string; long?: string };
+    status: { short: string; long?: string; elapsed?: number | null };
   };
   league: { name: string; round?: string };
   teams: {
@@ -36,12 +39,77 @@ function mapStatus(short: string): MatchCandidate["status"] {
   return "scheduled";
 }
 
-function toCandidate(row: AfFixture): MatchCandidate {
-  const home = proxyTeamStats(row.teams.home.name, { winRate: 0.48 });
-  const away = proxyTeamStats(row.teams.away.name, { winRate: 0.42 });
+/** Form points from FT games already in the 3-day window (0 extra API calls). */
+function formByTeamId(rows: AfFixture[]): Map<number, number[]> {
+  const finished = rows
+    .filter((r) => {
+      const s = r.fixture.status.short.toUpperCase();
+      return (
+        ["FT", "AET", "PEN"].includes(s) &&
+        r.goals.home != null &&
+        r.goals.away != null
+      );
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.fixture.date).getTime() - new Date(b.fixture.date).getTime(),
+    );
+
+  const map = new Map<number, number[]>();
+  const push = (teamId: number, pts: number) => {
+    const list = map.get(teamId) ?? [];
+    list.push(pts);
+    map.set(teamId, list.slice(-10));
+  };
+
+  for (const r of finished) {
+    const hg = r.goals.home!;
+    const ag = r.goals.away!;
+    if (hg > ag) {
+      push(r.teams.home.id, 1);
+      push(r.teams.away.id, 0);
+    } else if (hg < ag) {
+      push(r.teams.home.id, 0);
+      push(r.teams.away.id, 1);
+    } else {
+      push(r.teams.home.id, 0.5);
+      push(r.teams.away.id, 0.5);
+    }
+  }
+  return map;
+}
+
+function formAvg(form: number[]): number {
+  if (!form.length) return 0.5;
+  let w = 0;
+  let s = 0;
+  form.forEach((v, i) => {
+    const weight = i + 1;
+    s += v * weight;
+    w += weight;
+  });
+  return s / Math.max(1, w);
+}
+
+function toCandidate(
+  row: AfFixture,
+  formMap: Map<number, number[]>,
+): MatchCandidate {
+  const homeForm = formMap.get(row.teams.home.id);
+  const awayForm = formMap.get(row.teams.away.id);
+  const home = buildTeamStatsFromForm(row.teams.home.name, {
+    form: homeForm?.length ? homeForm : undefined,
+    winRate: homeForm?.length ? formAvg(homeForm) : 0.48,
+  });
+  const away = buildTeamStatsFromForm(row.teams.away.name, {
+    form: awayForm?.length ? awayForm : undefined,
+    winRate: awayForm?.length ? formAvg(awayForm) : 0.42,
+  });
   const kickoff = row.fixture.date;
   const status = mapStatus(row.fixture.status.short);
   const roundNum = Number(String(row.league.round ?? "").replace(/\D/g, ""));
+  const modeled = buildModelOdds(home, away, row.league.name);
+  const elapsed = row.fixture.status.elapsed;
   const match: MatchCandidate = {
     id: `af-${row.fixture.id}`,
     externalId: String(row.fixture.id),
@@ -50,11 +118,13 @@ function toCandidate(row: AfFixture): MatchCandidate {
     league: row.league.name,
     home,
     away,
-    odds: buildModelOdds(home, away),
+    odds: modeled.odds,
+    oddsSource: modeled.oddsSource,
     matchday: Number.isFinite(roundNum) ? roundNum : new Date(kickoff).getUTCDate(),
     status,
     homeScore: row.goals.home ?? undefined,
     awayScore: row.goals.away ?? undefined,
+    minute: typeof elapsed === "number" ? elapsed : undefined,
     provider: "api-football",
     sport: "football",
     providers: { "api-football": String(row.fixture.id) },
@@ -112,15 +182,14 @@ async function loadApiFootball(
   const dates = [-1, 0, 1].map((i) =>
     ymd(new Date(now.getTime() + i * 86400000)),
   );
-  const cacheKey = `af:window:v2:${dates.join(",")}`;
+  const cacheKey = `af:window:v3:${dates.join(",")}`;
 
   return withCache(cacheKey, CACHE_TTL.apiFootball, async () => {
     const settled = await Promise.allSettled(
       dates.map((date) => fetchFixturesForDate(date, key)),
     );
 
-    const seen = new Set<string>();
-    const out: MatchCandidate[] = [];
+    const allRows: AfFixture[] = [];
     const warnings: string[] = [];
 
     for (const result of settled) {
@@ -132,12 +201,18 @@ async function loadApiFootball(
         );
         continue;
       }
-      for (const row of result.value) {
-        const m = toCandidate(row);
-        if (seen.has(m.id)) continue;
-        seen.add(m.id);
-        out.push(m);
-      }
+      allRows.push(...result.value);
+    }
+
+    const formMap = formByTeamId(allRows);
+    const seen = new Set<string>();
+    const out: MatchCandidate[] = [];
+
+    for (const row of allRows) {
+      const m = toCandidate(row, formMap);
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push(m);
     }
 
     if (!out.length && warnings.length) {
@@ -239,7 +314,7 @@ export const apiFootballProvider: MatchProvider = {
       };
       if (afErrorMessage(json.errors)) return null;
       const row = json.response?.[0];
-      return row ? toCandidate(row) : null;
+      return row ? toCandidate(row, new Map()) : null;
     } catch {
       return null;
     }

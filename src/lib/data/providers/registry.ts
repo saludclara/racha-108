@@ -1,4 +1,5 @@
 import { mergeMatches } from "@/lib/data/merge";
+import { fillMissingWithModelOdds } from "@/lib/data/odds-model";
 import type { MatchCandidate, ScoredPick } from "@/lib/engine/types";
 import { apiFootballProvider } from "./api-football";
 import { espnProvider } from "./espn";
@@ -21,12 +22,15 @@ export type AggregatedFeed = {
 /**
  * Fetch + merge all enabled free providers.
  * ESPN always runs; optional keys power the rest.
+ * Model odds fill gaps only — never overwrite book prices.
  */
 export async function fetchAllMatches(
   opts: FetchOptions = {},
 ): Promise<AggregatedFeed> {
   const results = await Promise.all(ALL.map((p) => p.fetch(opts)));
-  const matches = mergeMatches(results.map((r) => r.matches));
+  const matches = mergeMatches(results.map((r) => r.matches)).map(
+    fillMissingWithModelOdds,
+  );
   return {
     matches,
     sources: results.map((r) => r.status),

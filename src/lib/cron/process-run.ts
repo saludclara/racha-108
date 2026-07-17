@@ -3,6 +3,7 @@ import {
   effectiveThreshold,
   hourKeyFor,
   hourKeyForIndex,
+  isTiltActive,
   parseCycleIndex,
   type AppState,
 } from "@/lib/engine";
@@ -168,6 +169,10 @@ export async function processRunCycle(
     feed.matches,
     feed.sources,
     now,
+    {
+      tiltActive: isTiltActive(next.tiltGuardUntil, now),
+      history: next.history,
+    },
   );
   next = applyHourlyResult(next, cycleKey, data, now);
   actions.push(

@@ -248,15 +248,29 @@ async function fetchHourly(
   hourKey: string,
   threshold: number,
   settings: AppSettings,
+  opts?: { tiltActive?: boolean; history?: AppState["history"] },
 ): Promise<HourlyPickResponse> {
-  const qs = new URLSearchParams({
-    hourKey,
-    threshold: String(threshold),
-    apiFootball: settings.enableApiFootball ? "1" : "0",
-    oddsApi: settings.enableOddsApi ? "1" : "0",
-    esports: settings.enableEsports ? "1" : "0",
+  const res = await fetch("/api/hourly", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "pick",
+      hourKey,
+      threshold,
+      tiltActive: opts?.tiltActive === true,
+      history: (opts?.history ?? []).slice(0, 100).map((h) => ({
+        outcome: h.outcome,
+        league: h.league,
+        provider: h.provider,
+        edge: h.edge,
+        modelProb: h.modelProb,
+      })),
+      apiFootball: settings.enableApiFootball,
+      oddsApi: settings.enableOddsApi,
+      esports: settings.enableEsports,
+    }),
+    cache: "no-store",
   });
-  const res = await fetch(`/api/hourly?${qs}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`API ${res.status}`);
   }
@@ -493,7 +507,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
 
           // Settled an older cycle → choose current cycle (same API as cron)
-          data = await fetchHourly(cycleKey, th, working.settings);
+          data = await fetchHourly(cycleKey, th, working.settings, {
+            tiltActive: isTiltActive(working.tiltGuardUntil),
+            history: working.history,
+          });
         } else if (
           working.lastResolvedHourKey === cycleKey &&
           (working.pickStatus === "resolved" ||
@@ -507,7 +524,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return;
         } else {
           // New cycle pick — same buildHourlyPick as /api/cron/cycle
-          data = await fetchHourly(cycleKey, th, working.settings);
+          data = await fetchHourly(cycleKey, th, working.settings, {
+            tiltActive: isTiltActive(working.tiltGuardUntil),
+            history: working.history,
+          });
         }
 
         if (cancelled) return;

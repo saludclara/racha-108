@@ -46,6 +46,8 @@ export type DataProvider =
   | "odds-api"
   | "pandascore";
 
+export type OddsSource = "book" | "model";
+
 export interface MatchCandidate {
   id: string;
   kickoff: string;
@@ -53,6 +55,8 @@ export interface MatchCandidate {
   home: TeamStats;
   away: TeamStats;
   odds: Partial<Record<MarketType, number>>;
+  /** Per-market: bookmaker vs model-fabricated (never treat model as book). */
+  oddsSource?: Partial<Record<MarketType, OddsSource>>;
   matchday: number;
   /** Real provider id (e.g. ESPN event id) */
   externalId?: string;
@@ -60,6 +64,8 @@ export interface MatchCandidate {
   status?: "scheduled" | "inplay" | "finished";
   homeScore?: number;
   awayScore?: number;
+  /** Elapsed match minutes when known (live). */
+  minute?: number;
   provider?: DataProvider;
   sport?: SportCategory;
   /** Stable key for cross-provider merge */
@@ -83,9 +89,15 @@ export interface ScoredPick {
   odds: number;
   modelProb: number;
   edge: number;
+  /** Book decimal odds when oddsSource=book; else undefined. */
+  bookOdds?: number;
+  oddsSource: OddsSource;
   totalScore: number;
   layers: LayerScore[];
   hourKey: string;
+  /** Shadow EV decision (logged; may differ when guarantee forces a pick). */
+  shadowWouldSkip?: boolean;
+  shadowNote?: string;
 }
 
 export interface VaultDeposit {
@@ -111,6 +123,15 @@ export interface HistoryEntry {
   score?: number;
   layers?: LayerScore[];
   note?: string;
+  /** Motor telemetry */
+  modelProb?: number;
+  edge?: number;
+  bookOdds?: number;
+  oddsSource?: OddsSource;
+  provider?: DataProvider;
+  league?: string;
+  matchId?: string;
+  shadowWouldSkip?: boolean;
 }
 
 export interface AppSettings {
