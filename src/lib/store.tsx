@@ -333,16 +333,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [state, didLoad, durableEnabled]);
 
-  // One decision per 1:11:11 cycle (cron advances durable runs server-side)
+  // Same cycle engine open or closed:
+  // - Closed + ?run= → cron calls buildHourlyPick / settle on the server
+  // - Open → this effect uses the same /api/hourly (+ remote sync if durable)
   useEffect(() => {
     if (!didLoad) return;
     let cancelled = false;
 
     (async () => {
       try {
-        // Prefer server state so closed-tab cron picks show up in the UI
         let working = state;
         const id = runIdRef.current;
+
+        // Durable: pull cron/server state first so open tab = closed-tab truth
         if (id && durableEnabled) {
           const remote = await apiLoadRun(id);
           if (cancelled) return;
@@ -363,6 +366,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         let data: HourlyPickResponse;
 
         if (working.pickStatus === "pending" && working.currentPick) {
+          // Identical settle path as cron (hard refresh + guarantee)
           data = await fetchRefresh(working.currentPick, working.settings);
           if (cancelled) return;
           setMatchCount(data.matchCount);
@@ -370,7 +374,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
           if (data.status === "pending") {
             setApiMessage(
-              data.message ?? "Esperando resultado · HotStack a riesgo",
+              data.message ??
+                (durableEnabled
+                  ? "Esperando resultado · cron + app usan el mismo pick"
+                  : "Esperando resultado · HotStack a riesgo"),
             );
             setState((s) =>
               applyHourlyResult(s, s.currentHourKey ?? cycleKey, data),
@@ -389,6 +396,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return;
           }
 
+          // Settled an older cycle → choose current cycle (same API as cron)
           data = await fetchHourly(cycleKey, th, working.settings);
         } else if (
           working.lastResolvedHourKey === cycleKey &&
@@ -397,11 +405,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ) {
           setApiMessage(
             durableEnabled
-              ? "Ciclo libre · cron activo · HotStack listo."
+              ? "Ciclo libre · mismo motor que el cron · HotStack listo."
               : "Ciclo libre · HotStack listo · próxima decisión en el countdown.",
           );
           return;
         } else {
+          // New cycle pick — same buildHourlyPick as /api/cron/cycle
           data = await fetchHourly(cycleKey, th, working.settings);
         }
 

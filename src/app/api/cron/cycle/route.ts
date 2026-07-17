@@ -149,11 +149,21 @@ export async function GET(req: Request) {
     offset += PAGE_SIZE;
   }
 
-  // No run UUIDs in the response — capability tokens stay out of cron logs.
+  // No run UUIDs — capability tokens stay out of cron logs.
   return NextResponse.json({
     ok: true,
     at: now.toISOString(),
     matchCount: snapshot.matches.length,
+    sources: snapshot.sources.map((s) => ({
+      id: s.id,
+      ok: s.ok,
+      count: s.count,
+      error: s.error
+        ? /limit|rate|request/i.test(s.error)
+          ? "límite free"
+          : "error de feed"
+        : undefined,
+    })),
     runCount,
     changed,
     conflicts,

@@ -29,17 +29,28 @@ function feedFromSearch(req: NextRequest) {
   };
 }
 
-/** Hide provider error strings / key presence probes. */
+/** Safe public source status (no raw upstream dumps). */
 function publicSources(sources: SourceStatus[] | undefined): SourceStatus[] {
   if (!sources?.length) return [];
-  return sources.map((s) => ({
-    id: s.id,
-    label: s.label,
-    enabled: s.enabled,
-    configured: s.enabled ? true : false,
-    ok: s.ok,
-    count: s.count,
-  }));
+  return sources.map((s) => {
+    let error: string | undefined;
+    if (!s.ok || s.error) {
+      const raw = (s.error ?? "").toLowerCase();
+      if (!s.configured) error = "sin key";
+      else if (/limit|rate|request/.test(raw)) error = "límite free";
+      else if (raw) error = "error de feed";
+      else if (!s.ok) error = "error de feed";
+    }
+    return {
+      id: s.id,
+      label: s.label,
+      enabled: s.enabled,
+      configured: s.configured,
+      ok: s.ok,
+      count: s.count,
+      error,
+    };
+  });
 }
 
 function withPublicSources<T extends { sources?: SourceStatus[] }>(data: T): T {

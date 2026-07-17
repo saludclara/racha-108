@@ -31,7 +31,8 @@ export async function withCache<T>(
 
 export const CACHE_TTL = {
   espn: 10 * 60_000,
-  apiFootball: 15 * 60_000,
+  /** Free plan ~100 req/day — long TTL; window cached as one key. */
+  apiFootball: 30 * 60_000,
   oddsApi: 45 * 60_000,
   pandascore: 15 * 60_000,
 } as const;

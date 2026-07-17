@@ -67,6 +67,21 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+function afErrorMessage(errors: unknown): string | null {
+  if (!errors) return null;
+  if (Array.isArray(errors)) return errors.length ? String(errors[0]) : null;
+  if (typeof errors === "object") {
+    const vals = Object.values(errors as Record<string, unknown>).filter(Boolean);
+    if (!vals.length) return null;
+    const joined = vals.map(String).join(" · ");
+    if (/rate|limit|request/i.test(joined)) {
+      return "límite diario / rate limit (plan free)";
+    }
+    return joined.slice(0, 160);
+  }
+  return String(errors).slice(0, 160);
+}
+
 async function fetchFixturesForDate(
   date: string,
   key: string,
@@ -77,37 +92,63 @@ async function fetchFixturesForDate(
       "User-Agent": "racha-108/1.0",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(12_000),
   });
   if (!res.ok) throw new Error(`API-Football HTTP ${res.status}`);
   const json = (await res.json()) as { response?: AfFixture[]; errors?: unknown };
-  if (json.errors && Object.keys(json.errors as object).length) {
-    throw new Error("API-Football rate/limit error");
-  }
+  const errMsg = afErrorMessage(json.errors);
+  if (errMsg) throw new Error(errMsg);
   return json.response ?? [];
 }
 
-async function loadApiFootball(now: Date, key: string): Promise<MatchCandidate[]> {
-  // ±2 days so overnight / late-UTC fixtures stay settleable after FT.
-  const dates = [-2, -1, 0, 1, 2].map((i) =>
+/**
+ * One cached window (ayer/hoy/mañana) — free plan is ~100 req/day.
+ * Partial success is OK: never fail the whole provider for one bad day.
+ */
+async function loadApiFootball(
+  now: Date,
+  key: string,
+): Promise<{ matches: MatchCandidate[]; warning?: string }> {
+  const dates = [-1, 0, 1].map((i) =>
     ymd(new Date(now.getTime() + i * 86400000)),
   );
-  const seen = new Set<string>();
-  const out: MatchCandidate[] = [];
+  const cacheKey = `af:window:v2:${dates.join(",")}`;
 
-  for (const date of dates) {
-    const rows = await withCache(
-      `af:fixtures:${date}`,
-      CACHE_TTL.apiFootball,
-      () => fetchFixturesForDate(date, key),
+  return withCache(cacheKey, CACHE_TTL.apiFootball, async () => {
+    const settled = await Promise.allSettled(
+      dates.map((date) => fetchFixturesForDate(date, key)),
     );
-    for (const row of rows) {
-      const m = toCandidate(row);
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
-      out.push(m);
+
+    const seen = new Set<string>();
+    const out: MatchCandidate[] = [];
+    const warnings: string[] = [];
+
+    for (const result of settled) {
+      if (result.status === "rejected") {
+        warnings.push(
+          result.reason instanceof Error
+            ? result.reason.message
+            : "error de feed",
+        );
+        continue;
+      }
+      for (const row of result.value) {
+        const m = toCandidate(row);
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        out.push(m);
+      }
     }
-  }
-  return out;
+
+    if (!out.length && warnings.length) {
+      throw new Error(warnings[0]);
+    }
+
+    return {
+      matches: out,
+      warning: out.length && warnings.length ? warnings[0] : undefined,
+    };
+  });
 }
 
 export const apiFootballProvider: MatchProvider = {
@@ -146,7 +187,10 @@ export const apiFootballProvider: MatchProvider = {
     }
 
     try {
-      const matches = await loadApiFootball(opts.now ?? new Date(), key);
+      const { matches, warning } = await loadApiFootball(
+        opts.now ?? new Date(),
+        key,
+      );
       return {
         matches,
         status: {
@@ -156,6 +200,7 @@ export const apiFootballProvider: MatchProvider = {
           configured: true,
           ok: true,
           count: matches.length,
+          error: warning,
         },
       };
     } catch (err) {
@@ -188,7 +233,11 @@ export const apiFootballProvider: MatchProvider = {
         signal: AbortSignal.timeout(8_000),
       });
       if (!res.ok) return null;
-      const json = (await res.json()) as { response?: AfFixture[] };
+      const json = (await res.json()) as {
+        response?: AfFixture[];
+        errors?: unknown;
+      };
+      if (afErrorMessage(json.errors)) return null;
       const row = json.response?.[0];
       return row ? toCandidate(row) : null;
     } catch {

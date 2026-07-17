@@ -47,6 +47,10 @@ function filterFeed(
 ): MatchFeedSnapshot {
   const matches = snapshot.matches.filter((m) => {
     if (m.sport === "esports" && !settings.enableEsports) return false;
+    if (m.provider === "api-football" && !settings.enableApiFootball) {
+      return false;
+    }
+    if (m.provider === "odds-api" && !settings.enableOddsApi) return false;
     return true;
   });
   return { matches, sources: snapshot.sources };
@@ -54,7 +58,7 @@ function filterFeed(
 
 /**
  * Advance one durable run through settle / catch-up skips / current-cycle pick.
- * Uses a shared match snapshot so cron can process many runs in one invocation.
+ * Same pick builder as the open app (`buildHourlyPickFromMatches` / `/api/hourly`).
  * Pending picks use direct event lookup so FT never silently becomes a blank push.
  */
 export async function processRunCycle(
@@ -67,6 +71,7 @@ export async function processRunCycle(
   const tz = state.settings.timezone;
   const cycleKey = hourKeyFor(now, tz);
   const currentIdx = parseCycleIndex(cycleKey);
+  // Filter to the run's enabled sources (same as the open-tab client)
   const feed = filterFeed(snapshot, state.settings);
   const matchCount = feed.matches.length;
   let next = state;
