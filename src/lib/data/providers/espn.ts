@@ -247,8 +247,9 @@ async function mapPool<T, R>(
 }
 
 async function loadEspnMatches(now: Date): Promise<MatchCandidate[]> {
-  // Current board + today + tomorrow (candidates for guaranteed cycle picks)
-  const dates = [0, 1].map((i) =>
+  // Yesterday+today+tomorrow: ESPN boards use US calendar days, so a
+  // 01:00Z kickoff lives on "yesterday" UTC and must stay fetchable after FT.
+  const dates = [-1, 0, 1].map((i) =>
     utcDateStamp(new Date(now.getTime() + i * 86400000)),
   );
   const jobs = ESPN_LEAGUES.flatMap((league) =>

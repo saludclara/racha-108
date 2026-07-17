@@ -87,7 +87,10 @@ async function fetchFixturesForDate(
 }
 
 async function loadApiFootball(now: Date, key: string): Promise<MatchCandidate[]> {
-  const dates = [0, 1].map((i) => ymd(new Date(now.getTime() + i * 86400000)));
+  // Include yesterday so late-UTC / overnight fixtures stay settleable after FT.
+  const dates = [-1, 0, 1].map((i) =>
+    ymd(new Date(now.getTime() + i * 86400000)),
+  );
   const seen = new Set<string>();
   const out: MatchCandidate[] = [];
 
