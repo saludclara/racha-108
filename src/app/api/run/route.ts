@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createInitialState, type AppState } from "@/lib/engine";
+import { createInitialState } from "@/lib/engine";
+import { adoptCloudState } from "@/lib/runs/merge";
 import { normalizeAppState } from "@/lib/runs/normalize";
 import {
   guardBrowserOrCron,
@@ -136,8 +137,8 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "id inválido" }, { status: 400 });
   }
 
-  const state = normalizeAppState(body.state);
-  if (!state) {
+  const incoming = normalizeAppState(body.state);
+  if (!incoming) {
     return NextResponse.json({ error: "state inválido" }, { status: 400 });
   }
 
@@ -145,6 +146,37 @@ export async function PUT(req: Request) {
     typeof body.expectedUpdatedAt === "string"
       ? body.expectedUpdatedAt.trim()
       : "";
+
+  // Load current so history/ledger accumulate instead of being replaced
+  const { data: cur, error: curErr } = await getSupabaseAdmin()
+    .from("runs")
+    .select("id, state, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (curErr) {
+    console.error("[api/run PUT load]", curErr);
+    return genericDbError();
+  }
+  if (!cur) {
+    return NextResponse.json({ error: "Run no encontrado" }, { status: 404 });
+  }
+
+  if (expectedUpdatedAt && cur.updated_at !== expectedUpdatedAt) {
+    const curState = normalizeAppState(cur.state);
+    return NextResponse.json(
+      {
+        error: "conflict",
+        id: cur.id as string,
+        state: curState,
+        updatedAt: cur.updated_at as string,
+      },
+      { status: 409 },
+    );
+  }
+
+  const existing = normalizeAppState(cur.state);
+  const state = existing ? adoptCloudState(existing, incoming) : incoming;
 
   const nowIso = new Date().toISOString();
   let query = getSupabaseAdmin()
@@ -166,25 +198,25 @@ export async function PUT(req: Request) {
   }
 
   if (!data) {
-    // Conflict or missing — load current for client merge
-    const { data: cur } = await getSupabaseAdmin()
+    // Race: another writer landed between load and update
+    const { data: again } = await getSupabaseAdmin()
       .from("runs")
       .select("id, state, updated_at")
       .eq("id", id)
       .maybeSingle();
 
-    if (!cur) {
+    if (!again) {
       return NextResponse.json({ error: "Run no encontrado" }, { status: 404 });
     }
 
     if (expectedUpdatedAt) {
-      const curState = normalizeAppState(cur.state);
+      const curState = normalizeAppState(again.state);
       return NextResponse.json(
         {
           error: "conflict",
-          id: cur.id as string,
+          id: again.id as string,
           state: curState,
-          updatedAt: cur.updated_at as string,
+          updatedAt: again.updated_at as string,
         },
         { status: 409 },
       );

@@ -24,8 +24,13 @@ import {
 } from "@/lib/engine";
 import type { HourlyPickResponse } from "@/lib/data/real";
 import type { SourceStatus } from "@/lib/data/providers/types";
+import { adoptCloudState } from "@/lib/runs/merge";
 
 const STORAGE_KEY = "racha-108-state-v4-real";
+const LEGACY_STORAGE_KEYS = [
+  "racha-108-state-v3",
+  "racha-108-state-v2",
+] as const;
 const RUN_ID_KEY = "racha-108-run-id";
 const RUN_COOKIE = "racha_run";
 const UUID_RE =
@@ -61,20 +66,39 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-function loadLocalState(): AppState {
-  if (typeof window === "undefined") return createInitialState();
+function parseStoredState(raw: string): AppState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createInitialState();
     const parsed = JSON.parse(raw) as AppState;
+    if (!parsed || typeof parsed !== "object") return null;
     return {
       ...createInitialState(),
       ...parsed,
       settings: { ...createInitialState().settings, ...parsed.settings },
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+      vaultLedger: Array.isArray(parsed.vaultLedger) ? parsed.vaultLedger : [],
     };
   } catch {
-    return createInitialState();
+    return null;
   }
+}
+
+function loadLocalState(): AppState {
+  if (typeof window === "undefined") return createInitialState();
+  const primary = localStorage.getItem(STORAGE_KEY);
+  if (primary) {
+    const parsed = parseStoredState(primary);
+    if (parsed) return parsed;
+  }
+  // Recover history from older keys if v4 was wiped / never written
+  for (const key of LEGACY_STORAGE_KEYS) {
+    const legacy = localStorage.getItem(key);
+    if (!legacy) continue;
+    const parsed = parseStoredState(legacy);
+    if (parsed && (parsed.history.length > 0 || parsed.vault > 0)) {
+      return parsed;
+    }
+  }
+  return createInitialState();
 }
 
 function saveLocalState(state: AppState) {
@@ -352,17 +376,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void bootstrapCloud(local)
       .then((boot) => {
         if (cancelled) return;
+        const adopted = adoptCloudState(local, boot.state);
         if (boot.durable && boot.runId) {
           runIdRef.current = boot.runId;
           updatedAtRef.current = boot.updatedAt;
           setRunId(boot.runId);
           setDurableEnabled(true);
-          setState(boot.state);
-          saveLocalState(boot.state);
+          setState(adopted);
+          saveLocalState(adopted);
         } else {
           setDurableEnabled(false);
-          setState(boot.state);
-          saveLocalState(boot.state);
+          setState(adopted);
+          saveLocalState(adopted);
           if (boot.cloudConfigured) {
             setApiMessage(
               "Reintentando nube… para picks con la app cerrada",
@@ -395,12 +420,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const local = loadLocalState();
       void bootstrapCloud(local).then((boot) => {
         if (cancelled || !boot.durable || !boot.runId) return;
+        const adopted = adoptCloudState(local, boot.state);
         runIdRef.current = boot.runId;
         updatedAtRef.current = boot.updatedAt;
         setRunId(boot.runId);
         setDurableEnabled(true);
-        setState(boot.state);
-        saveLocalState(boot.state);
+        setState(adopted);
+        saveLocalState(adopted);
         setApiMessage("Nube activa · picks aunque cierres la app");
       });
     };
@@ -428,9 +454,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (result === "unavailable") return;
           updatedAtRef.current = result.payload.updatedAt;
           if (result.kind === "conflict" && result.payload.state) {
-            // Cron (or another tab) won — adopt server state
-            setState(result.payload.state);
-            saveLocalState(result.payload.state);
+            // Cron (or another tab) won — adopt live fields, keep all history
+            setState((local) => {
+              const adopted = adoptCloudState(local, result.payload.state);
+              saveLocalState(adopted);
+              return adopted;
+            });
           }
         })
         .catch((err) => {
@@ -460,10 +489,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const remote = await apiLoadRun(id);
           if (cancelled) return;
           if (remote) {
-            working = remote.state;
+            working = adoptCloudState(state, remote.state);
             updatedAtRef.current = remote.updatedAt;
-            setState(remote.state);
-            saveLocalState(remote.state);
+            setState(working);
+            saveLocalState(working);
           }
         }
 
@@ -489,14 +518,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   ? "Esperando resultado · cron + app usan el mismo pick"
                   : "Esperando resultado · HotStack a riesgo"),
             );
-            setState((s) =>
-              applyHourlyResult(s, s.currentHourKey ?? cycleKey, data),
-            );
+            setState((s) => {
+              const base = adoptCloudState(s, working);
+              return applyHourlyResult(
+                base,
+                base.currentHourKey ?? cycleKey,
+                data,
+              );
+            });
             return;
           }
 
           const pickCycle = working.currentHourKey ?? data.hourKey;
-          setState((s) => applyHourlyResult(s, pickCycle, data));
+          setState((s) =>
+            applyHourlyResult(adoptCloudState(s, working), pickCycle, data),
+          );
           if (cancelled) return;
 
           if (pickCycle === cycleKey) {
@@ -534,7 +570,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setApiMessage(data.message ?? null);
         setMatchCount(data.matchCount);
         if (data.sources) setSources(data.sources);
-        setState((s) => applyHourlyResult(s, cycleKey, data));
+        setState((s) =>
+          applyHourlyResult(adoptCloudState(s, working), cycleKey, data),
+        );
       } catch (err) {
         if (cancelled) return;
         console.error(err);
