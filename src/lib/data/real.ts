@@ -3,10 +3,29 @@ import {
   refreshMatchForPick,
 } from "@/lib/data/providers/registry";
 import type { SourceStatus } from "@/lib/data/providers/types";
+import { isDeepLive } from "@/lib/engine/eligibility";
 import { CYCLE_MS } from "@/lib/engine/schedule";
-import { pickBestForHour, type PickBestOptions } from "@/lib/engine/score";
+import {
+  choosePickForHour,
+  type PickBestOptions,
+  type SkipReason,
+} from "@/lib/engine/score";
 import { settleFromScores, settlePick } from "@/lib/engine/settle";
 import type { MatchCandidate, ScoredPick } from "@/lib/engine/types";
+
+const SKIP_COPY: Record<SkipReason, string> = {
+  empty_pool:
+    "SKIP · empty_pool · sin candidatos en ventana. HotStack intacto.",
+  no_book:
+    "SKIP · no_book · sin cuotas book en banda 1.30–1.90. HotStack intacto.",
+  deep_live:
+    "SKIP · deep_live · solo finales / live profundo. HotStack intacto.",
+  edge: "SKIP · edge · book sin edge/prob suficientes. HotStack intacto.",
+  decided:
+    "SKIP · decided · mercado ya cerrado por marcador. HotStack intacto.",
+  threshold:
+    "SKIP · threshold · book no llega a preferencia de score. HotStack intacto.",
+};
 
 /** Tolerate FT landing within this cycle + one more (keeps HotStack turning). */
 export const SETTLE_SLACK_MS = CYCLE_MS;
@@ -114,9 +133,9 @@ export function settleableForCycle(
     const kick = kickoffMs(m);
     if (!Number.isFinite(kick)) continue;
 
-    // 1) Live — high chance of FT this/next cycle
+    // 1) Live early enough for value (not deep/near-FT)
     if (m.status === "inplay") {
-      inplay.push(m);
+      if (!isDeepLive(m, now)) inplay.push(m);
       continue;
     }
 
@@ -161,7 +180,7 @@ export function candidatePoolForCycle(
 
   const t = now.getTime();
   const near = open.filter((m) => {
-    if (m.status === "inplay") return true;
+    if (m.status === "inplay") return !isDeepLive(m, now);
     const kick = kickoffMs(m);
     return (
       Number.isFinite(kick) &&
@@ -298,8 +317,6 @@ export type MatchFeedSnapshot = {
   sources: SourceStatus[];
 };
 
-export type HourlyPickOpts = PickBestOptions;
-
 /** Pure pick builder over an already-fetched feed (cron reuses one snapshot). */
 export function buildHourlyPickFromMatches(
   hourKey: string,
@@ -307,7 +324,7 @@ export function buildHourlyPickFromMatches(
   all: MatchCandidate[],
   sources: SourceStatus[],
   now = new Date(),
-  pickOpts: HourlyPickOpts = {},
+  pickOpts: PickBestOptions = {},
 ): HourlyPickResponse {
   const { pool, tier } = candidatePoolForCycle(all, now);
 
@@ -323,14 +340,19 @@ export function buildHourlyPickFromMatches(
       message:
         all.length === 0
           ? "No se pudieron obtener partidos ahora. Reintentá en un minuto."
-          : "Sin partidos liquidables (live / kickoff ≤6h). HotStack libre.",
+          : SKIP_COPY.empty_pool,
       fetchedAt: now.toISOString(),
     };
   }
 
-  // Shadow week default: guarantee on + log EV SKIP (see pickBestForHour).
-  // Set MOTOR_GUARANTEE=0 to enable real quality SKIP.
-  const pick = pickBestForHour(pool, hourKey, threshold, now, pickOpts);
+  // Default: book + edge or SKIP. MOTOR_GUARANTEE=1 re-enables force-pick.
+  const { pick, skipReason } = choosePickForHour(
+    pool,
+    hourKey,
+    threshold,
+    now,
+    pickOpts,
+  );
 
   if (!pick) {
     return {
@@ -341,8 +363,7 @@ export function buildHourlyPickFromMatches(
       settle: null,
       matchCount: pool.length,
       sources,
-      message:
-        "SKIP de calidad · sin edge/prob suficientes en la ventana liquidable. HotStack intacto.",
+      message: SKIP_COPY[skipReason ?? "no_book"],
       fetchedAt: now.toISOString(),
     };
   }
@@ -350,24 +371,23 @@ export function buildHourlyPickFromMatches(
   const fresh = withInferredFinish(findMatch(all, pick) ?? pick.match, now);
   const refreshed: ScoredPick = { ...pick, match: fresh, hourKey };
 
+  // Never win on the same tick as place — that is zero HotStack risk.
   if (fresh.status === "finished") {
-    return trySettleFinished(
-      refreshed,
-      fresh,
-      pool.length,
+    return {
+      ok: true,
+      hourKey,
+      status: "empty",
+      pick: null,
+      settle: null,
+      matchCount: pool.length,
       sources,
-      now,
-    );
+      message: SKIP_COPY.decided,
+      fetchedAt: now.toISOString(),
+    };
   }
 
   const tierNote =
     tier === "settleable" ? "ventana liquidable" : "kickoff ≤6h";
-  const shadowBit =
-    refreshed.shadowWouldSkip === true
-      ? " · shadow: EV SKIP"
-      : refreshed.shadowNote?.startsWith("Shadow: EV alt")
-        ? " · shadow: EV alt"
-        : "";
 
   return {
     ok: true,
@@ -377,7 +397,7 @@ export function buildHourlyPickFromMatches(
     settle: null,
     matchCount: pool.length,
     sources,
-    message: `Pick del ciclo · ${tierNote} · ${fresh.status === "inplay" ? "en juego" : "kickoff"} ${new Date(fresh.kickoffUtc ?? fresh.kickoff).toLocaleString("es-AU")}${shadowBit}`,
+    message: `Pick del ciclo · BOOK @${refreshed.odds.toFixed(2)} · ${tierNote} · ${fresh.status === "inplay" ? "en juego" : "kickoff"} ${new Date(fresh.kickoffUtc ?? fresh.kickoff).toLocaleString("es-AU")}`,
     fetchedAt: now.toISOString(),
   };
 }
@@ -387,7 +407,7 @@ export async function buildHourlyPick(
   threshold: number,
   now = new Date(),
   feed: FeedOptions = {},
-  pickOpts: HourlyPickOpts = {},
+  pickOpts: PickBestOptions = {},
 ): Promise<HourlyPickResponse> {
   const { matches: all, sources } = await fetchAllMatches({
     now,

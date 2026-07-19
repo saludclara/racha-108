@@ -29,7 +29,7 @@ function dixonColesTau(
 }
 
 /** League-tuned home advantage + low-score correlation. */
-export function leagueParams(league: string): { homeAdv: number; rho: number } {
+function leagueParams(league: string): { homeAdv: number; rho: number } {
   const L = league.toLowerCase();
   if (/mls|usa|mexico|liga mx|mexic/.test(L)) return { homeAdv: 1.12, rho: -0.1 };
   if (/premier|epl|england/.test(L)) return { homeAdv: 1.14, rho: -0.09 };
@@ -41,7 +41,7 @@ export function leagueParams(league: string): { homeAdv: number; rho: number } {
   return { homeAdv: 1.1, rho: -0.08 };
 }
 
-export function expectedGoals(
+function expectedGoals(
   home: TeamStats,
   away: TeamStats,
   league = "",
@@ -164,9 +164,12 @@ export function marketModelProb(
   }
 }
 
-/** Odds slightly softer than true model prob → positive edge */
+/**
+ * Model fill prices (not book). Keep coherent with Dixon–Coles favorites —
+ * do not stretch to the book value band (that invents fake edge).
+ */
 export function fairOdds(modelProb: number, soft = 0.025): number {
-  const implied = Math.min(0.96, Math.max(0.78, modelProb - soft));
+  const implied = Math.min(0.93, Math.max(0.74, modelProb - soft));
   const odds = 1 / implied;
-  return Math.round(Math.max(1.05, Math.min(1.22, odds)) * 100) / 100;
+  return Math.round(Math.max(1.08, Math.min(1.35, odds)) * 100) / 100;
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   STREAK_GOAL,
   computeMotorMetrics,
@@ -7,6 +8,8 @@ import {
   type HistoryEntry,
 } from "@/lib/engine";
 import { useApp } from "@/lib/store";
+
+const TIMELINE_FROM_KEY = "racha-108-timeline-from";
 
 function outcomePill(outcome: HistoryEntry["outcome"]): string {
   if (outcome === "win") return "pill-win";
@@ -26,14 +29,22 @@ function pct(n: number | null | undefined): string {
   return `${(n * 100).toFixed(0)}%`;
 }
 
-export default function RachaPage() {
-  const { state, ready } = useApp();
-  if (!ready) return null;
+function cellColor(outcome: HistoryEntry["outcome"] | undefined): string {
+  if (outcome === "win") return "var(--ios-blue)";
+  if (outcome === "loss") return "var(--ios-red)";
+  if (outcome === "pending") return "var(--ios-orange)";
+  if (outcome === "push") return "var(--ios-teal)";
+  if (outcome === "skip") return "rgba(120, 120, 128, 0.35)";
+  return "var(--ios-fill)";
+}
 
-  const slots = Array.from({ length: STREAK_GOAL }, (_, i) => i + 1);
-  const metrics = computeMotorMetrics(state.history, 50);
+function cellTitle(entry: HistoryEntry | undefined, slot: number): string {
+  if (!entry) return `Slot ${slot}`;
+  const label = entry.matchLabel ?? entry.note ?? entry.hourKey;
+  return `#${slot} · ${outcomeLabel(entry.outcome)} · ${label}`;
+}
 
-  // Backfill: open pick must appear even if an older client never wrote pending
+function buildRows(state: ReturnType<typeof useApp>["state"]): HistoryEntry[] {
   const rows: HistoryEntry[] = [...state.history];
   if (
     state.pickStatus === "pending" &&
@@ -65,6 +76,69 @@ export default function RachaPage() {
       matchId: pick.match.id,
     });
   }
+  return rows;
+}
+
+export default function RachaPage() {
+  const { state, ready } = useApp();
+  const [splitFromId, setSplitFromId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      const saved = localStorage.getItem(TIMELINE_FROM_KEY);
+      if (saved) {
+        setSplitFromId(saved);
+        return;
+      }
+      // Seed: partir desde el PUSH Chaves vs AVS (pedido del usuario)
+      const chaves = state.history.find(
+        (h) =>
+          h.outcome === "push" &&
+          /chaves\s+vs\s+avs/i.test(h.matchLabel ?? ""),
+      );
+      if (chaves) {
+        localStorage.setItem(TIMELINE_FROM_KEY, chaves.id);
+        setSplitFromId(chaves.id);
+      }
+    } catch {
+      // ignore
+    }
+  }, [ready, state.history]);
+
+  if (!ready) return null;
+
+  const slots = Array.from({ length: STREAK_GOAL }, (_, i) => i + 1);
+  const metrics = computeMotorMetrics(state.history, 50);
+  const rows = buildRows(state);
+
+  const chronological = [...rows]
+    .filter((h) => h.outcome !== "skip")
+    .reverse();
+
+  const splitIdx = splitFromId
+    ? chronological.findIndex((h) => h.id === splitFromId)
+    : -1;
+  const timeline = (
+    splitIdx >= 0 ? chronological.slice(splitIdx) : chronological
+  ).slice(0, STREAK_GOAL);
+
+  const splitLabel =
+    splitIdx >= 0
+      ? chronological[splitIdx]?.matchLabel ??
+        chronological[splitIdx]?.hourKey ??
+        null
+      : null;
+
+  const setSplit = (id: string | null) => {
+    setSplitFromId(id);
+    try {
+      if (id) localStorage.setItem(TIMELINE_FROM_KEY, id);
+      else localStorage.removeItem(TIMELINE_FROM_KEY);
+    } catch {
+      // ignore
+    }
+  };
 
   return (
     <div className="rise space-y-5">
@@ -74,23 +148,76 @@ export default function RachaPage() {
           {state.streak}/{STREAK_GOAL}
         </h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Mejor: {state.bestStreak}. Picks en juego + liquidaciones reales.
+          Mejor: {state.bestStreak}. Camino real del historial, no solo wins.
         </p>
       </header>
 
       <div className="ios-card p-4">
         <div className="grid grid-cols-12 gap-1.5">
-          {slots.map((n) => (
-            <div
-              key={n}
-              title={`#${n}`}
-              className="aspect-square rounded-[3px]"
-              style={{
-                background:
-                  n <= state.streak ? "var(--ios-blue)" : "var(--ios-fill)",
-              }}
+          {slots.map((n, i) => {
+            const entry = timeline[i];
+            const isSplit = entry != null && entry.id === splitFromId;
+            return (
+              <button
+                key={entry?.id ?? `slot-${n}`}
+                type="button"
+                title={
+                  entry
+                    ? `${cellTitle(entry, n)} · tocá para partir desde acá`
+                    : cellTitle(entry, n)
+                }
+                disabled={!entry}
+                onClick={() => entry && setSplit(entry.id)}
+                className="aspect-square rounded-[3px] disabled:cursor-default"
+                style={{
+                  background: cellColor(entry?.outcome),
+                  outline: isSplit
+                    ? "2px solid var(--ios-label)"
+                    : undefined,
+                  outlineOffset: isSplit ? 1 : undefined,
+                }}
+              />
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--muted)]">
+          <span>
+            <span
+              className="mr-1 inline-block h-2 w-2 rounded-[2px]"
+              style={{ background: "var(--ios-blue)" }}
             />
-          ))}
+            Win
+          </span>
+          <span>
+            <span
+              className="mr-1 inline-block h-2 w-2 rounded-[2px]"
+              style={{ background: "var(--ios-red)" }}
+            />
+            Loss
+          </span>
+          <span>
+            <span
+              className="mr-1 inline-block h-2 w-2 rounded-[2px]"
+              style={{ background: "var(--ios-orange)" }}
+            />
+            En juego
+          </span>
+          <span>
+            <span
+              className="mr-1 inline-block h-2 w-2 rounded-[2px]"
+              style={{ background: "var(--ios-teal)" }}
+            />
+            Push
+          </span>
+          {splitLabel && (
+            <button
+              type="button"
+              onClick={() => setSplit(null)}
+              className="ml-auto text-[var(--ios-blue)]"
+            >
+              Desde {splitLabel.split(" vs ")[0] ?? "corte"} · ver todo
+            </button>
+          )}
         </div>
       </div>
 

@@ -51,6 +51,32 @@ export function settleFromScores(
   return settleMarketFromScore(market, homeScore, awayScore);
 }
 
+/**
+ * True when live scores already lock the market (outcome cannot change).
+ * Unlike settleFromScores, does not treat mid-game unders as "won".
+ */
+export function isMarketLockedByScores(
+  market: MarketType,
+  homeScore: number | null | undefined,
+  awayScore: number | null | undefined,
+): boolean {
+  if (homeScore == null || awayScore == null) return false;
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return false;
+  const total = homeScore + awayScore;
+  const btts = homeScore > 0 && awayScore > 0;
+  switch (market) {
+    case "under_25":
+      return total >= 3;
+    case "under_35":
+      return total >= 4;
+    case "btts_no":
+      return btts;
+    default:
+      // 1X2 / AH need full time
+      return false;
+  }
+}
+
 export function settlePick(pick: ScoredPick): SettleResult | null {
   const { match, market } = pick;
   if (match.status !== "finished") return null;

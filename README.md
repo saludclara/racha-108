@@ -2,10 +2,11 @@
 
 Web app de **apuestas ficticias** (bankroll simulado) sobre **partidos reales**.
 
-- 1 pick cada **1h 11m 11s** · stake base **11.11 AUD**
+- Cada **1h 11m 11s**: **SKIP** o 1 pick **BOOK** con edge · stake base **11.11 AUD**
 - Objetivo: **108** aciertos seguidos
 - HotStack / Vault
 - Liquidación con **marcador real** (no RNG)
+- Sin finales live / sin odds modelo en HotStack (hace falta `ODDS_API_KEY`)
 
 ## Datos (free tiers)
 
@@ -34,8 +35,9 @@ Push a `main` → Vercel auto-deploy.
 - ESPN funciona **sin keys** en la nube
 - Keys free opcionales en Vercel → Project → Settings → Environment Variables:
   - `API_FOOTBALL_KEY`
-  - `ODDS_API_KEY`
+  - `ODDS_API_KEY` (necesaria para picks reales; sin book → SKIP)
   - `PANDASCORE_TOKEN`
   - `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (estado durable vía `?run=`)
+  - `MOTOR_GUARANTEE=1` (opt-in debug: fuerza pick aunque falle EV)
 
 Endpoint: `/api/hourly` (serverless, `maxDuration` 60s) · `/api/run` (persistencia)

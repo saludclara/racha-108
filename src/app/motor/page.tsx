@@ -86,9 +86,9 @@ export default function MotorPage() {
         <p className="section-label !normal-case !tracking-normal">Lab</p>
         <h1 className="large-title">Motor</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Ranking EV en ventana liquidable. Shadow week: el pick de producto
-          sigue; se loguea si EV hubiera hecho SKIP. Lore ≤5% y fuera del rank.
-          Env MOTOR_GUARANTEE=0 activa SKIP real.
+          Ranking EV book-only (edge ≥2pp, odds 1.30–1.90). Sin book o sin
+          edge → SKIP. Lore ≤5% y fuera del rank. Debug: MOTOR_GUARANTEE=1
+          fuerza pick shadow.
         </p>
       </header>
 

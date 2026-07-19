@@ -2,8 +2,9 @@ export const STAKE_BASE = 11.11;
 export const STREAK_GOAL = 108;
 export const DEFAULT_SCORE_THRESHOLD = 82;
 export const TILT_GUARD_HOURS = 6;
-export const MIN_ODDS = 1.05;
-export const MAX_ODDS = 1.25;
+/** Book value band — model fills use a separate fairOdds clamp. */
+export const MIN_ODDS = 1.3;
+export const MAX_ODDS = 1.9;
 export const DEFAULT_TIMEZONE = "Australia/Sydney";
 
 export type MarketType =
@@ -95,7 +96,7 @@ export interface ScoredPick {
   totalScore: number;
   layers: LayerScore[];
   hourKey: string;
-  /** Shadow EV decision (logged; may differ when guarantee forces a pick). */
+  /** Quality/EV note (SKIP reasons, or forced when MOTOR_GUARANTEE=1). */
   shadowWouldSkip?: boolean;
   shadowNote?: string;
 }

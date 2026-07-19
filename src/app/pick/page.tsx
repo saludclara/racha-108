@@ -27,7 +27,7 @@ export default function PickPage() {
         </div>
         <h1 className="large-title mt-1">Apuesta del ciclo</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          1 pick por ciclo (live / kickoff ≤6h) · shadow EV en Motor/historial ·
+          SKIP o pick BOOK @1.30–1.90 · edge ≥2pp · sin finales live ·
           preferencia {threshold} · {matchCount} en feed
         </p>
         {apiMessage && (
@@ -43,7 +43,7 @@ export default function PickPage() {
           <p className="mt-3 text-[15px] text-[var(--muted)]">
             {last?.note ??
               apiMessage ??
-              "SKIP de calidad · HotStack intacto este ciclo."}
+              "SKIP · sin book+edge este ciclo · HotStack intacto."}
           </p>
           <button type="button" className="btn btn-primary mt-4 w-full" onClick={refreshNow}>
             Reconsultar feed

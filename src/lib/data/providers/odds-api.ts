@@ -4,7 +4,12 @@ import {
   buildTeamStatsFromForm,
   markBookOdds,
 } from "@/lib/data/odds-model";
-import type { MarketType, MatchCandidate } from "@/lib/engine/types";
+import {
+  MAX_ODDS,
+  MIN_ODDS,
+  type MarketType,
+  type MatchCandidate,
+} from "@/lib/engine/types";
 import type { FetchOptions, MatchProvider, ProviderResult } from "./types";
 
 const BASE = "https://api.the-odds-api.com/v4";
@@ -35,17 +40,17 @@ function extractGrindOdds(
     for (const market of book.markets) {
       if (market.key === "h2h") {
         const home = market.outcomes.find((o) => o.name === event.home_team);
-        if (home && home.price >= 1.05 && home.price <= 1.25) {
+        if (home && home.price >= MIN_ODDS && home.price <= MAX_ODDS) {
           odds.home_win = Math.min(odds.home_win ?? 99, home.price);
         }
       }
       if (market.key === "totals") {
         for (const o of market.outcomes) {
           if (o.name.toLowerCase() !== "under" || o.point == null) continue;
-          if (o.point === 3.5 && o.price >= 1.05 && o.price <= 1.25) {
+          if (o.point === 3.5 && o.price >= MIN_ODDS && o.price <= MAX_ODDS) {
             odds.under_35 = Math.min(odds.under_35 ?? 99, o.price);
           }
-          if (o.point === 2.5 && o.price >= 1.05 && o.price <= 1.25) {
+          if (o.point === 2.5 && o.price >= MIN_ODDS && o.price <= MAX_ODDS) {
             odds.under_25 = Math.min(odds.under_25 ?? 99, o.price);
           }
         }

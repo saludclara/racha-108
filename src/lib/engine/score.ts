@@ -11,6 +11,8 @@ import {
 } from "./numerology";
 import { marketModelProb } from "./model";
 import { softBlacklists, type SoftBlacklist } from "./metrics";
+import { isDeepLive } from "./eligibility";
+import { isMarketLockedByScores } from "./settle";
 import type {
   HistoryEntry,
   LayerScore,
@@ -22,11 +24,13 @@ import type {
 
 const WEIGHTS = SCORE_WEIGHTS;
 
-/** Hard filters for quality / shadow EV. */
-export const MIN_MODEL_PROB = 0.78;
-export const MIN_EDGE_BOOK = 0;
-/** Without book odds — rank by modelProb only (no fake edge). */
-export const MIN_MODEL_PROB_SOFT = 0.78;
+/** Hard filters for quality EV (book-only product path). */
+const MIN_MODEL_PROB = 0.78;
+const MIN_EDGE_BOOK = 0.02;
+const MAX_MODEL_PROB = 0.92;
+/** Model fills only (soft/forced debug) — not the book value band. */
+const MODEL_MIN_ODDS = 1.08;
+const MODEL_MAX_ODDS = 1.35;
 
 function clamp(n: number, min = 0, max = 100): number {
   return Math.min(max, Math.max(min, n));
@@ -52,7 +56,7 @@ function oddsSourceFor(
 }
 
 /** Score without lore — used for threshold / rank tie-breaks. */
-export function grindScore(layers: LayerScore[]): number {
+function grindScore(layers: LayerScore[]): number {
   let sum = 0;
   let w = 0;
   for (const l of layers) {
@@ -174,7 +178,7 @@ function valueLayer(
   const kelly = b > 0 ? (b * modelProb - (1 - modelProb)) / b : -1;
   let score = clamp(48 + edge * 520 + kelly * 55);
   if (edge < 0) score = Math.min(score, 42);
-  if (odds > 1.22) score = Math.min(score, 58);
+  if (odds > 1.7) score = Math.min(score, 62);
   return {
     key: "value",
     label: "Matemática de valor",
@@ -194,25 +198,25 @@ function modelCtx(match: MatchCandidate) {
   };
 }
 
-export type QualityGates = {
+type QualityGates = {
   minModelProb: number;
-  minModelProbSoft: number;
   minEdgeBook: number;
+  maxModelProb: number;
 };
 
 /** Tilt raises EV gates (not only the UI score threshold). */
-export function qualityGatesFor(tiltActive: boolean): QualityGates {
+function qualityGatesFor(tiltActive: boolean): QualityGates {
   if (!tiltActive) {
     return {
       minModelProb: MIN_MODEL_PROB,
-      minModelProbSoft: MIN_MODEL_PROB_SOFT,
       minEdgeBook: MIN_EDGE_BOOK,
+      maxModelProb: MAX_MODEL_PROB,
     };
   }
   return {
     minModelProb: Math.min(0.9, MIN_MODEL_PROB + 0.04),
-    minModelProbSoft: Math.min(0.92, MIN_MODEL_PROB_SOFT + 0.05),
-    minEdgeBook: 0.015,
+    minEdgeBook: MIN_EDGE_BOOK + 0.01,
+    maxModelProb: MAX_MODEL_PROB,
   };
 }
 
@@ -221,13 +225,15 @@ export type QualityGate = {
   reasons: string[];
 };
 
-/** Whether EV/quality filters would accept this candidate. */
+/** Whether EV/quality filters would accept this candidate (book + edge). */
 export function evaluateQuality(
   pick: ScoredPick,
   gates: QualityGates = qualityGatesFor(false),
 ): QualityGate {
   const reasons: string[] = [];
-  if (pick.oddsSource === "book") {
+  if (pick.oddsSource !== "book") {
+    reasons.push("no_book");
+  } else {
     if (pick.edge < gates.minEdgeBook) {
       reasons.push(
         `edge ${(pick.edge * 100).toFixed(1)}pp < ${(gates.minEdgeBook * 100).toFixed(1)}pp`,
@@ -238,9 +244,10 @@ export function evaluateQuality(
         `p_model ${(pick.modelProb * 100).toFixed(1)}% < ${(gates.minModelProb * 100).toFixed(0)}%`,
       );
     }
-  } else if (pick.modelProb < gates.minModelProbSoft) {
+  }
+  if (pick.modelProb > gates.maxModelProb) {
     reasons.push(
-      `sin book · p_model ${(pick.modelProb * 100).toFixed(1)}% < ${(gates.minModelProbSoft * 100).toFixed(0)}%`,
+      `p_model ${(pick.modelProb * 100).toFixed(1)}% > ${(gates.maxModelProb * 100).toFixed(0)}% (lock)`,
     );
   }
   if (requiresExtremeFavorite(pick.market) && pick.modelProb < 0.8) {
@@ -263,9 +270,23 @@ function buildScoredPick(
   opts: { strict: boolean; force?: boolean; gates: QualityGates },
 ): ScoredPick | null {
   const odds = match.odds[market];
-  if (odds == null || !isOddsInRange(odds)) return null;
+  if (odds == null) return null;
+
+  if (match.status === "finished") return null;
+  if (isDeepLive(match, now)) return null;
+  if (isMarketLockedByScores(market, match.homeScore, match.awayScore)) {
+    return null;
+  }
 
   const source = oddsSourceFor(match, market);
+  // Quality path is book-only; model odds never place HotStack.
+  if (opts.strict && source !== "book") return null;
+  if (source === "book") {
+    if (!isOddsInRange(odds)) return null;
+  } else if (odds < MODEL_MIN_ODDS || odds > MODEL_MAX_ODDS) {
+    return null;
+  }
+
   const modelProb = marketModelProb(
     market,
     match.home,
@@ -278,13 +299,10 @@ function buildScoredPick(
   const { gates } = opts;
 
   if (!opts.force) {
+    if (modelProb > gates.maxModelProb) return null;
     if (opts.strict) {
-      if (source === "book") {
-        if (modelProb < gates.minModelProb) return null;
-        if (edge < gates.minEdgeBook) return null;
-      } else if (modelProb < gates.minModelProbSoft) {
-        return null;
-      }
+      if (modelProb < gates.minModelProb) return null;
+      if (edge < gates.minEdgeBook) return null;
       if (requiresExtremeFavorite(market) && modelProb < 0.8) return null;
       if (market === "ah_home_m05" && modelProb < 0.86) return null;
       if (market === "home_win" && modelProb < 0.78) return null;
@@ -323,7 +341,7 @@ function buildScoredPick(
   pick.shadowWouldSkip = !quality.ok;
   pick.shadowNote = quality.ok
     ? "EV/quality OK"
-    : `Shadow SKIP: ${quality.reasons.join("; ")}`;
+    : `SKIP: ${quality.reasons.join("; ")}`;
 
   return pick;
 }
@@ -340,16 +358,13 @@ const marketPriority: Partial<Record<MarketType, number>> = {
   ah_home_m05: 0,
 };
 
-/** Primary rank: book edge → modelProb → grind score (no lore) → market. */
+/** Primary rank: book → edge → grind (no lore) → market. Never raw modelProb. */
 function rankPicks(list: ScoredPick[]): ScoredPick[] {
   return [...list].sort((a, b) => {
     const aBook = a.oddsSource === "book" ? 1 : 0;
     const bBook = b.oddsSource === "book" ? 1 : 0;
     if (bBook !== aBook) return bBook - aBook;
-    if (a.oddsSource === "book" && b.oddsSource === "book") {
-      if (b.edge !== a.edge) return b.edge - a.edge;
-    }
-    if (b.modelProb !== a.modelProb) return b.modelProb - a.modelProb;
+    if (b.edge !== a.edge) return b.edge - a.edge;
     const ag = grindScore(a.layers);
     const bg = grindScore(b.layers);
     if (bg !== ag) return bg - ag;
@@ -419,13 +434,9 @@ function selectFromBuckets(
   threshold: number,
   guarantee: boolean,
 ): ScoredPick | null {
-  const primary = quality.filter((p) => {
-    const g = grindScore(p.layers);
-    return g >= threshold || p.modelProb >= 0.88 || p.edge >= 0.02;
-  });
-
+  // Product path: must clear grind threshold (no p≥0.88 / quality fallback).
+  const primary = quality.filter((p) => grindScore(p.layers) >= threshold);
   if (primary.length) return rankPicks(primary)[0];
-  if (quality.length) return rankPicks(quality)[0];
   if (!guarantee) return null;
   if (soft.length) return rankPicks(soft)[0];
   if (forced.length) return rankPicks(forced)[0];
@@ -434,33 +445,127 @@ function selectFromBuckets(
 
 export type PickBestOptions = {
   /**
-   * Shadow week default: true — keep product picks, log EV decision.
-   * Set false (or MOTOR_GUARANTEE=0) to enable quality SKIP for real.
+   * Default off: real quality SKIP when no book+edge pick.
+   * Set true (or MOTOR_GUARANTEE=1) to force soft/forced shadow picks.
    */
   guarantee?: boolean;
   tiltActive?: boolean;
   history?: HistoryEntry[];
 };
 
+/** Concrete SKIP codes for UI / cron messages. */
+export type SkipReason =
+  | "empty_pool"
+  | "no_book"
+  | "deep_live"
+  | "edge"
+  | "decided"
+  | "threshold";
+
+export type PickBestResult = {
+  pick: ScoredPick | null;
+  skipReason: SkipReason | null;
+};
+
 function resolveGuarantee(opts: PickBestOptions): boolean {
   if (typeof opts.guarantee === "boolean") return opts.guarantee;
-  // Env escape hatch: MOTOR_GUARANTEE=0 ends shadow week
-  if (process.env.MOTOR_GUARANTEE === "0") return false;
-  return true;
+  // Opt-in shadow force-pick for debug
+  return process.env.MOTOR_GUARANTEE === "1";
+}
+
+/** Why quality book picks failed this cycle (for observability). */
+function diagnoseSkipReason(
+  pool: MatchCandidate[],
+  hourKey: string,
+  now: Date,
+  gates: QualityGates,
+  threshold: number,
+): SkipReason {
+  if (!pool.length) return "empty_pool";
+
+  let sawBookInBand = false;
+  let deep = 0;
+  let decided = 0;
+  let edgeFail = 0;
+  let belowThreshold = 0;
+
+  for (const match of pool) {
+    for (const market of ALLOWED_MARKETS) {
+      const odds = match.odds[market];
+      if (odds == null) continue;
+      if (oddsSourceFor(match, market) !== "book") continue;
+      if (!isOddsInRange(odds)) continue;
+      sawBookInBand = true;
+
+      if (match.status === "finished") {
+        decided++;
+        continue;
+      }
+      if (isDeepLive(match, now)) {
+        deep++;
+        continue;
+      }
+      if (isMarketLockedByScores(market, match.homeScore, match.awayScore)) {
+        decided++;
+        continue;
+      }
+
+      const modelProb = marketModelProb(
+        market,
+        match.home,
+        match.away,
+        modelCtx(match),
+      );
+      const edge = modelProb - 1 / odds;
+      if (
+        modelProb > gates.maxModelProb ||
+        modelProb < gates.minModelProb ||
+        edge < gates.minEdgeBook
+      ) {
+        edgeFail++;
+        continue;
+      }
+
+      const candidate = buildScoredPick(match, market, hourKey, now, {
+        strict: true,
+        gates,
+      });
+      if (!candidate) {
+        edgeFail++;
+        continue;
+      }
+      if (grindScore(candidate.layers) < threshold) {
+        belowThreshold++;
+      }
+    }
+  }
+
+  if (!sawBookInBand) return "no_book";
+  if (belowThreshold > 0 && edgeFail === 0 && deep === 0 && decided === 0) {
+    return "threshold";
+  }
+  if (edgeFail > 0) return "edge";
+  if (decided > 0 && deep === 0) return "decided";
+  if (deep > 0) return "deep_live";
+  if (belowThreshold > 0) return "threshold";
+  if (decided > 0) return "decided";
+  return "no_book";
 }
 
 /**
- * Best settleable-window grind pick.
- * Shadow (default): guarantee on + shadowWouldSkip / shadowNote from pure EV.
+ * Best settleable-window grind pick + concrete SKIP reason.
+ * Default: book + edge + grind threshold, else null.
  */
-export function pickBestForHour(
+export function choosePickForHour(
   matches: MatchCandidate[],
   hourKey: string,
   threshold: number,
   now = new Date(),
   opts: PickBestOptions = {},
-): ScoredPick | null {
-  if (!matches.length) return null;
+): PickBestResult {
+  if (!matches.length) {
+    return { pick: null, skipReason: "empty_pool" };
+  }
 
   const guarantee = resolveGuarantee(opts);
   const gates = qualityGatesFor(Boolean(opts.tiltActive));
@@ -471,7 +576,9 @@ export function pickBestForHour(
   const filtered = filterBlacklisted(matches, bl);
   // Soft: if blacklist wipes the board, keep the settleable pool
   const pool = filtered.length ? filtered : matches;
-  if (!pool.length) return null;
+  if (!pool.length) {
+    return { pick: null, skipReason: "empty_pool" };
+  }
 
   // Pure EV candidate (what we would do with guarantee off)
   const evBuckets = collectCandidates(pool, hourKey, now, gates, false);
@@ -484,10 +591,15 @@ export function pickBestForHour(
   );
 
   if (!guarantee) {
-    if (!evPick) return null;
+    if (!evPick) {
+      return {
+        pick: null,
+        skipReason: diagnoseSkipReason(pool, hourKey, now, gates, threshold),
+      };
+    }
     evPick.shadowWouldSkip = false;
     evPick.shadowNote = "EV mode · pick taken";
-    return evPick;
+    return { pick: evPick, skipReason: null };
   }
 
   // Product pick may fall back to soft/forced
@@ -499,7 +611,12 @@ export function pickBestForHour(
     threshold,
     true,
   );
-  if (!pick) return null;
+  if (!pick) {
+    return {
+      pick: null,
+      skipReason: diagnoseSkipReason(pool, hourKey, now, gates, threshold),
+    };
+  }
 
   if (!evPick) {
     pick.shadowWouldSkip = true;
@@ -516,5 +633,16 @@ export function pickBestForHour(
     pick.shadowNote = "Shadow: EV agrees with product pick";
   }
 
-  return pick;
+  return { pick, skipReason: null };
+}
+
+/** Convenience wrapper — prefer choosePickForHour when SKIP reason matters. */
+export function pickBestForHour(
+  matches: MatchCandidate[],
+  hourKey: string,
+  threshold: number,
+  now = new Date(),
+  opts: PickBestOptions = {},
+): ScoredPick | null {
+  return choosePickForHour(matches, hourKey, threshold, now, opts).pick;
 }
