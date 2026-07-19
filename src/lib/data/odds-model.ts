@@ -81,19 +81,6 @@ export function buildTeamStatsFromForm(
   };
 }
 
-/** @deprecated alias — prefer buildTeamStatsFromForm */
-export function proxyTeamStats(
-  name: string,
-  opts?: {
-    form?: number[];
-    winRate?: number;
-    restDays?: number;
-    injuries?: number;
-  },
-): TeamStats {
-  return buildTeamStatsFromForm(name, opts);
-}
-
 /** Attach model odds only for markets missing book prices. */
 export function fillMissingWithModelOdds(match: MatchCandidate): MatchCandidate {
   const { odds: modelOdds } = buildModelOdds(

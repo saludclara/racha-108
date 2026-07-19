@@ -13,22 +13,6 @@ export const revalidate = 0;
 /** Allow ESPN multi-league fetch on Vercel (Fluid / Pro; hobby may still cap lower). */
 export const maxDuration = 60;
 
-function parseBool(v: string | null, fallback: boolean): boolean {
-  if (v == null) return fallback;
-  return v === "1" || v === "true";
-}
-
-function feedFromSearch(req: NextRequest) {
-  return {
-    enableApiFootball: parseBool(
-      req.nextUrl.searchParams.get("apiFootball"),
-      true,
-    ),
-    enableOddsApi: parseBool(req.nextUrl.searchParams.get("oddsApi"), true),
-    enableEsports: parseBool(req.nextUrl.searchParams.get("esports"), true),
-  };
-}
-
 /** Safe public source status (no raw upstream dumps). */
 function publicSources(sources: SourceStatus[] | undefined): SourceStatus[] {
   if (!sources?.length) return [];
@@ -99,45 +83,6 @@ function asHistory(raw: unknown): HistoryEntry[] | undefined {
   return out.length ? out : undefined;
 }
 
-export async function GET(req: NextRequest) {
-  const denied =
-    guardBrowserOrCron(req) ?? guardRateLimit(req, "hourly-get", 30, 60_000);
-  if (denied) return denied;
-
-  const hourKey = req.nextUrl.searchParams.get("hourKey");
-  const threshold = Number(req.nextUrl.searchParams.get("threshold") ?? "82");
-  const tiltActive = parseBool(req.nextUrl.searchParams.get("tilt"), false);
-
-  if (!hourKey) {
-    return NextResponse.json(
-      { ok: false, error: "hourKey required" },
-      { status: 400 },
-    );
-  }
-
-  try {
-    const data = await buildHourlyPick(
-      hourKey,
-      Number.isFinite(threshold) ? threshold : 82,
-      new Date(),
-      feedFromSearch(req),
-      { tiltActive },
-    );
-    return NextResponse.json(withPublicSources(data), {
-      headers: { "Cache-Control": "no-store" },
-    });
-  } catch (err) {
-    console.error("hourly pick failed", err);
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "No se pudo consultar el feed de partidos reales.",
-      },
-      { status: 502 },
-    );
-  }
-}
-
 export async function POST(req: NextRequest) {
   const denied =
     guardBrowserOrCron(req) ??
@@ -147,7 +92,6 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = (await req.json()) as {
-      action?: "pick" | "refresh";
       hourKey?: string;
       threshold?: number;
       tiltActive?: boolean;
@@ -164,14 +108,7 @@ export async function POST(req: NextRequest) {
       enableEsports: body.esports !== false,
     };
 
-    // New-cycle pick with history (blacklist + tilt gates)
-    if (body.action === "pick" || (body.hourKey && !body.pick)) {
-      if (!body.hourKey) {
-        return NextResponse.json(
-          { ok: false, error: "hourKey required" },
-          { status: 400 },
-        );
-      }
+    if (body.hourKey && !body.pick) {
       const threshold =
         typeof body.threshold === "number" && Number.isFinite(body.threshold)
           ? body.threshold
@@ -193,10 +130,11 @@ export async function POST(req: NextRequest) {
 
     if (!body.pick) {
       return NextResponse.json(
-        { ok: false, error: "pick required" },
+        { ok: false, error: "hourKey or pick required" },
         { status: 400 },
       );
     }
+
     const data = await refreshPickSettlement(body.pick, new Date(), feed);
     return NextResponse.json(withPublicSources(data), {
       headers: { "Cache-Control": "no-store" },

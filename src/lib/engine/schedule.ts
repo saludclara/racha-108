@@ -74,18 +74,12 @@ export function hourKeyForIndex(
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}-c${index}`;
 }
 
-export function nextHourBoundary(
-  date: Date,
-  _timeZone = DEFAULT_TIMEZONE,
-): Date {
+export function nextHourBoundary(date: Date): Date {
   return cycleEnd(cycleIndex(date));
 }
 
-export function msUntilNextHour(
-  date = new Date(),
-  timeZone = DEFAULT_TIMEZONE,
-): number {
-  return Math.max(0, nextHourBoundary(date, timeZone).getTime() - date.getTime());
+export function msUntilNextHour(date = new Date()): number {
+  return Math.max(0, nextHourBoundary(date).getTime() - date.getTime());
 }
 
 export function formatCountdown(ms: number): string {

@@ -56,15 +56,11 @@ function reduceToArcana(n: number): number {
   return x;
 }
 
-export function universalDayNumber(date: Date): number {
+function universalDayNumber(date: Date): number {
   return digitSum(date.getDate() + date.getMonth() + 1 + date.getFullYear());
 }
 
-export function personalYearNumber(date: Date): number {
-  return digitSum(date.getDate() + date.getMonth() + 1 + date.getFullYear());
-}
-
-export function majorArcanaOfDay(date: Date): {
+function majorArcanaOfDay(date: Date): {
   number: number;
   name: string;
   vibe: "grind" | "attack" | "balance" | "chaos";
@@ -80,7 +76,7 @@ export function majorArcanaOfDay(date: Date): {
   return { number, name: card.name, vibe: card.vibe };
 }
 
-export function hourVibration(hourKey: string): number {
+function hourVibration(hourKey: string): number {
   const digits = hourKey.replace(/\D/g, "");
   if (!digits) return 5;
   return digitSum(Number(digits.slice(-6)));

@@ -1,4 +1,4 @@
-import type { DataProvider, HistoryEntry, MarketType } from "./types";
+import type { DataProvider, HistoryEntry } from "./types";
 
 export type BucketStats = {
   key: string;
@@ -205,5 +205,3 @@ export function historyToCsv(history: HistoryEntry[]): string {
   }
   return lines.join("\n");
 }
-
-export type { MarketType };

@@ -44,6 +44,4 @@ export const CACHE_TTL = {
   /** Book prices — 3 min */
   oddsApi: 3 * 60_000,
   pandascore: 2 * 60_000,
-  /** Future standings / H2H */
-  standings: 6 * 3600_000,
 } as const;

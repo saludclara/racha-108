@@ -73,14 +73,3 @@ export async function refreshMatchForPick(
   }
   return null;
 }
-
-export function providerConfigSummary(): SourceStatus[] {
-  return ALL.map((p) => ({
-    id: p.id,
-    label: p.label,
-    enabled: true,
-    configured: p.isConfigured(),
-    ok: p.isConfigured(),
-    count: 0,
-  }));
-}

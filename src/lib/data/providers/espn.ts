@@ -383,11 +383,3 @@ export const espnProvider: MatchProvider = {
     return rest.find((m) => m != null) ?? null;
   },
 };
-
-/** Back-compat helper used by older imports. */
-export async function fetchEspnMatches(
-  now = new Date(),
-): Promise<MatchCandidate[]> {
-  const { matches } = await espnProvider.fetch({ now });
-  return matches;
-}

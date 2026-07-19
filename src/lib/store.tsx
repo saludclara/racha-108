@@ -278,7 +278,6 @@ async function fetchHourly(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      action: "pick",
       hourKey,
       threshold,
       tiltActive: opts?.tiltActive === true,
@@ -607,7 +606,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let timeoutId: ReturnType<typeof setTimeout>;
 
     const arm = () => {
-      const ms = msUntilNextHour(new Date(), state.settings.timezone);
+      const ms = msUntilNextHour(new Date());
       const delay = Math.max(250, Math.min(ms + 120, 15_000));
       timeoutId = setTimeout(() => {
         setTick((t) => t + 1);

@@ -6,18 +6,16 @@ import {
   formatMoneyAUD,
   msUntilNextHour,
 } from "@/lib/engine";
-import { useApp } from "@/lib/store";
 
 export function Countdown() {
-  const { state } = useApp();
   const [ms, setMs] = useState(0);
 
   useEffect(() => {
-    const tick = () => setMs(msUntilNextHour(new Date(), state.settings.timezone));
+    const tick = () => setMs(msUntilNextHour(new Date()));
     tick();
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, [state.settings.timezone]);
+  }, []);
 
   return (
     <div className="countdown text-4xl font-semibold tracking-widest text-[var(--accent)] md:text-5xl">
