@@ -1,12 +1,88 @@
 import type { DataProvider, MatchCandidate } from "@/lib/engine/types";
 
-function normalizeName(name: string): string {
-  return name
+/** Common display → canonical stubs so ESPN ↔ Odds API stick together. */
+const NAME_ALIASES: Record<string, string> = {
+  manunited: "manchesterunited",
+  manutd: "manchesterunited",
+  mancity: "manchestercity",
+  spurs: "tottenham",
+  tottenhamhotspur: "tottenham",
+  atleticomadrid: "atletico",
+  atleticomadr: "atletico",
+  atlmadrid: "atletico",
+  intermilan: "inter",
+  internazionalemilano: "inter",
+  acmilan: "milan",
+  psg: "parissaintgermain",
+  parissg: "parissaintgermain",
+  bayern: "bayernmunich",
+  bayernmunchen: "bayernmunich",
+  borussiadortmund: "dortmund",
+  bvb: "dortmund",
+  sportingcp: "sportinglisbon",
+  sportinglisboa: "sportinglisbon",
+  benfica: "slbenfica",
+  porto: "fcporto",
+  olympiquelyonnais: "lyon",
+  olympiquemarseille: "marseille",
+  asroma: "roma",
+  sslazio: "lazio",
+  napoli: "sscnapoli",
+  juve: "juventus",
+  barca: "barcelona",
+  fcbayern: "bayernmunich",
+  rbileipzig: "leipzig",
+  rasporteipzig: "leipzig",
+  wolverhampton: "wolves",
+  wolverhamptonwanderers: "wolves",
+  nottinghamforest: "nottingham",
+  newcastleunited: "newcastle",
+  westbrom: "westbromwich",
+  brightonandhovealbion: "brighton",
+  brightonhovealbion: "brighton",
+  athleticobilbao: "athletic",
+  athleticclub: "athletic",
+  realsociedad: "sociedad",
+  realsocieda: "sociedad",
+  villarrealcf: "villarreal",
+  getafecf: "getafe",
+  sevillafc: "sevilla",
+  realbetis: "betis",
+  bocajuniors: "boca",
+  riverplate: "river",
+  flamengo: "crflamengo",
+  saopaulo: "saopaulo",
+  intermiami: "intermiami",
+  lafc: "losangelesfc",
+  lagalaxy: "losangelesgalaxy",
+};
+
+const STRIP_TOKENS =
+  /^(fc|cf|sc|afc|cfc|ac|as|ss|rc|cd|ud|sd|club|deportivo|sporting|the)$/;
+
+function stripNoise(raw: string): string {
+  return raw
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "")
-    .slice(0, 24);
+    .replace(/['’.]/g, "")
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t && !STRIP_TOKENS.test(t))
+    .join("");
+}
+
+function normalizeName(name: string): string {
+  let key = stripNoise(name);
+  if (NAME_ALIASES[key]) return NAME_ALIASES[key];
+  // Prefix / contains alias (e.g. "manchesterunitedfc" already stripped)
+  for (const [alias, canon] of Object.entries(NAME_ALIASES)) {
+    if (key === alias || key.startsWith(alias) || alias.startsWith(key)) {
+      if (Math.min(key.length, alias.length) >= 6) return canon;
+    }
+  }
+  return key.slice(0, 28);
 }
 
 /** Cross-provider identity: home+away+kickoff bucket (15 min). */
@@ -19,6 +95,11 @@ export function canonicalIdFor(match: {
   const kick = new Date(match.kickoffUtc ?? match.kickoff).getTime();
   const bucket = Math.floor(kick / (15 * 60_000));
   return `${normalizeName(match.home.name)}-${normalizeName(match.away.name)}-${bucket}`;
+}
+
+/** Loose key without time — used for ±1 bucket rescue merge. */
+function teamPairKey(match: MatchCandidate): string {
+  return `${normalizeName(match.home.name)}-${normalizeName(match.away.name)}`;
 }
 
 const PROVIDER_PRIORITY: Record<DataProvider, number> = {
@@ -45,7 +126,6 @@ function mergePair(a: MatchCandidate, b: MatchCandidate): MatchCandidate {
     providers[other.provider] = other.externalId;
   }
 
-  // Prefer finished status + scores from either
   const finished =
     base.status === "finished" || other.status === "finished"
       ? "finished"
@@ -91,7 +171,6 @@ function mergePair(a: MatchCandidate, b: MatchCandidate): MatchCandidate {
         ? other.minute
         : undefined;
 
-  // Prefer form arrays that aren't flat 0.5 placeholders
   const formRichness = (f: number[]) =>
     f.reduce((s, x) => s + Math.abs(x - 0.5), 0);
 
@@ -126,6 +205,60 @@ function mergePair(a: MatchCandidate, b: MatchCandidate): MatchCandidate {
   };
 }
 
+function kickBucket(match: MatchCandidate): number {
+  const kick = new Date(match.kickoffUtc ?? match.kickoff).getTime();
+  return Math.floor(kick / (15 * 60_000));
+}
+
+/**
+ * Second pass: same team pair, kickoff within ±1 bucket (15m),
+ * so slight time skew still merges Odds API → ESPN live.
+ */
+function rescueNearDuplicates(matches: MatchCandidate[]): MatchCandidate[] {
+  const byPair = new Map<string, MatchCandidate[]>();
+  for (const m of matches) {
+    const k = teamPairKey(m);
+    const list = byPair.get(k) ?? [];
+    list.push(m);
+    byPair.set(k, list);
+  }
+
+  const used = new Set<string>();
+  const out: MatchCandidate[] = [];
+
+  for (const group of byPair.values()) {
+    if (group.length === 1) {
+      out.push(group[0]!);
+      continue;
+    }
+    group.sort((a, b) => kickBucket(a) - kickBucket(b));
+    for (let i = 0; i < group.length; i++) {
+      const a = group[i]!;
+      const idA = a.canonicalId ?? a.id;
+      if (used.has(idA)) continue;
+      let merged = a;
+      used.add(idA);
+      for (let j = i + 1; j < group.length; j++) {
+        const b = group[j]!;
+        const idB = b.canonicalId ?? b.id;
+        if (used.has(idB)) continue;
+        if (Math.abs(kickBucket(a) - kickBucket(b)) > 1) continue;
+        // Different providers (or book+fixture) for same fixture → glue
+        const sameProvider =
+          (a.provider ?? "") === (b.provider ?? "") &&
+          a.provider != null &&
+          b.provider != null;
+        if (sameProvider && a.id === b.id) continue;
+        merged = mergePair(merged, b);
+        used.add(idB);
+      }
+      out.push(merged);
+    }
+  }
+
+  return out;
+}
+
 /** Dedup + merge fixtures from multiple providers. */
 export function mergeMatches(lists: MatchCandidate[][]): MatchCandidate[] {
   const byCanonical = new Map<string, MatchCandidate>();
@@ -143,7 +276,9 @@ export function mergeMatches(lists: MatchCandidate[][]): MatchCandidate[] {
     }
   }
 
-  return [...byCanonical.values()].sort(
+  const rescued = rescueNearDuplicates([...byCanonical.values()]);
+
+  return rescued.sort(
     (a, b) =>
       new Date(a.kickoffUtc ?? a.kickoff).getTime() -
       new Date(b.kickoffUtc ?? b.kickoff).getTime(),

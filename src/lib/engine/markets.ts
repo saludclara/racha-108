@@ -27,6 +27,11 @@ export function isOddsInRange(odds: number): boolean {
   return odds >= MIN_ODDS && odds <= MAX_ODDS;
 }
 
+/** Human label for UI copy (e.g. "1.10–1.50"). */
+export function formatOddsBand(): string {
+  return `${MIN_ODDS.toFixed(2)}–${MAX_ODDS.toFixed(2)}`;
+}
+
 export function requiresExtremeFavorite(market: MarketType): boolean {
   return market === "home_win" || market === "ah_home_m05";
 }

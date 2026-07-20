@@ -3,8 +3,9 @@ import { canonicalIdFor } from "@/lib/data/merge";
 import {
   buildModelOdds,
   buildTeamStatsFromForm,
+  markBookOdds,
 } from "@/lib/data/odds-model";
-import type { MatchCandidate, TeamStats } from "@/lib/engine/types";
+import type { MarketType, MatchCandidate, TeamStats } from "@/lib/engine/types";
 import type { MatchProvider, ProviderResult } from "./types";
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
@@ -101,6 +102,16 @@ type EspnStatus = {
   };
 };
 
+type EspnOddsRow = {
+  details?: string;
+  overUnder?: number;
+  spread?: number;
+  overOdds?: number;
+  underOdds?: number;
+  homeTeamOdds?: { moneyLine?: number; spreadOdds?: number };
+  awayTeamOdds?: { moneyLine?: number; spreadOdds?: number };
+};
+
 type EspnEvent = {
   id: string;
   date?: string;
@@ -109,9 +120,66 @@ type EspnEvent = {
     date?: string;
     status?: EspnStatus;
     competitors?: EspnCompetitor[];
-    odds?: { details?: string; overUnder?: number; spread?: number }[];
+    odds?: EspnOddsRow[];
   }[];
 };
+
+/** American moneyline → decimal. */
+function americanToDecimal(ml: number): number | undefined {
+  if (!Number.isFinite(ml) || ml === 0) return undefined;
+  const dec = ml > 0 ? 1 + ml / 100 : 1 + 100 / Math.abs(ml);
+  return dec > 1 ? Math.round(dec * 1000) / 1000 : undefined;
+}
+
+/**
+ * Pull book-ish prices from ESPN scoreboard when present.
+ * Soccer boards sometimes expose moneyLine / underOdds.
+ */
+function extractEspnBookOdds(
+  rows: EspnOddsRow[] | undefined,
+): Partial<Record<MarketType, number>> {
+  if (!rows?.length) return {};
+  const odds: Partial<Record<MarketType, number>> = {};
+  for (const row of rows) {
+    const homeMl = americanToDecimal(row.homeTeamOdds?.moneyLine ?? NaN);
+    if (homeMl != null) {
+      odds.home_win =
+        odds.home_win == null ? homeMl : Math.min(odds.home_win, homeMl);
+    }
+    const underDec = americanToDecimal(row.underOdds ?? NaN);
+    if (underDec != null && row.overUnder != null) {
+      if (row.overUnder === 2.5) {
+        odds.under_25 =
+          odds.under_25 == null
+            ? underDec
+            : Math.min(odds.under_25, underDec);
+      }
+      if (row.overUnder === 3.5) {
+        odds.under_35 =
+          odds.under_35 == null
+            ? underDec
+            : Math.min(odds.under_35, underDec);
+      }
+    }
+    const spreadHome = americanToDecimal(row.homeTeamOdds?.spreadOdds ?? NaN);
+    if (spreadHome != null && row.spread != null) {
+      // ESPN soccer spread is often absolute; prefer negative home lines
+      if (row.spread === 0.5 || row.spread === -0.5) {
+        odds.ah_home_m05 =
+          odds.ah_home_m05 == null
+            ? spreadHome
+            : Math.min(odds.ah_home_m05, spreadHome);
+      }
+      if (row.spread === 0.25 || row.spread === -0.25) {
+        odds.ah_home_m025 =
+          odds.ah_home_m025 == null
+            ? spreadHome
+            : Math.min(odds.ah_home_m025, spreadHome);
+      }
+    }
+  }
+  return odds;
+}
 
 function utcDateStamp(d: Date): string {
   const y = d.getUTCFullYear();
@@ -203,6 +271,18 @@ function eventToCandidate(
   if (!kickoffIso) return null;
   const kickoff = new Date(kickoffIso);
   const modeled = buildModelOdds(home, away, leagueName);
+  const espnBook = extractEspnBookOdds(competition?.odds);
+  const odds = { ...modeled.odds };
+  const oddsSource = { ...modeled.oddsSource };
+  for (const [k, v] of Object.entries(espnBook) as [MarketType, number][]) {
+    if (v == null) continue;
+    odds[k] = v;
+    oddsSource[k] = "book";
+  }
+  // Ensure any book keys are tagged (defensive)
+  for (const [k, src] of Object.entries(markBookOdds(espnBook))) {
+    oddsSource[k as MarketType] = src;
+  }
   const match: MatchCandidate = {
     id: `espn-${event.id}`,
     externalId: event.id,
@@ -211,8 +291,8 @@ function eventToCandidate(
     league: leagueName,
     home,
     away,
-    odds: modeled.odds,
-    oddsSource: modeled.oddsSource,
+    odds,
+    oddsSource,
     matchday: kickoff.getUTCDate(),
     status,
     homeScore: Number.isFinite(homeScore) ? homeScore : undefined,

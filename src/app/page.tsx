@@ -25,7 +25,7 @@ export default function HomePage() {
   }
 
   const progress = Math.min(100, (state.streak / STREAK_GOAL) * 100);
-  const last = state.history[0];
+  const lastPick = state.history.find((h) => h.outcome !== "skip");
   const pick = state.currentPick;
   const hotAtRisk = state.pickStatus === "pending" && Boolean(pick);
 
@@ -160,7 +160,7 @@ export default function HomePage() {
         </Link>
       )}
 
-      {last && (
+      {lastPick && (
         <Link
           href="/racha"
           className="ios-card block p-4 transition-opacity active:opacity-70"
@@ -169,35 +169,48 @@ export default function HomePage() {
             <p className="text-[13px] text-[var(--muted)]">Pick anterior</p>
             <span
               className={`pill ${
-                last.outcome === "win"
+                lastPick.outcome === "win"
                   ? "pill-win"
-                  : last.outcome === "loss"
+                  : lastPick.outcome === "loss"
                     ? "pill-loss"
-                    : "pill-skip"
+                    : lastPick.outcome === "push"
+                      ? "pill-auto"
+                      : "pill-skip"
               }`}
             >
-              {last.outcome.toUpperCase()}
+              {lastPick.outcome === "pending"
+                ? "EN JUEGO"
+                : lastPick.outcome === "push"
+                  ? "PUSH"
+                  : lastPick.outcome.toUpperCase()}
             </span>
           </div>
           <p className="mt-2 text-[15px] font-medium leading-snug">
-            {last.matchLabel ?? last.note ?? "—"}
+            {lastPick.matchLabel ?? lastPick.note ?? "—"}
           </p>
-          {(last.marketLabel || last.odds != null) && (
+          {(lastPick.marketLabel || lastPick.odds != null) && (
             <p className="mt-1 text-[13px] text-[var(--muted)]">
-              {[last.marketLabel, last.odds != null ? `@ ${last.odds}` : null]
+              {[
+                lastPick.marketLabel,
+                lastPick.odds != null ? `@ ${lastPick.odds}` : null,
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             </p>
           )}
           <p className="mt-1 text-[12px] text-[var(--muted)]">
-            {formatBetWhen(last.hourKey, last.at, state.settings.timezone)}
+            {formatBetWhen(
+              lastPick.hourKey,
+              lastPick.at,
+              state.settings.timezone,
+            )}
           </p>
-          {last.outcome === "loss" && last.plainFix ? (
+          {lastPick.outcome === "loss" && lastPick.plainFix ? (
             <p
               className="mt-2 text-[13px] leading-snug"
               style={{ color: "var(--ios-blue)" }}
             >
-              {last.plainFix}
+              {lastPick.plainFix}
             </p>
           ) : null}
         </Link>

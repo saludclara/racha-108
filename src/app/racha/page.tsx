@@ -6,6 +6,8 @@ import {
   STREAK_GOAL,
   computeMotorMetrics,
   formatBetWhen,
+  skipDisplayFromNote,
+  skipOutcomeLabel,
   type HistoryEntry,
 } from "@/lib/engine";
 import { useApp } from "@/lib/store";
@@ -22,7 +24,31 @@ function outcomePill(outcome: HistoryEntry["outcome"]): string {
 function outcomeLabel(outcome: HistoryEntry["outcome"]): string {
   if (outcome === "pending") return "EN JUEGO";
   if (outcome === "push") return "PUSH";
+  if (outcome === "skip") return skipOutcomeLabel();
   return outcome.toUpperCase();
+}
+
+function historyTitle(h: HistoryEntry): string {
+  if (h.outcome === "skip") {
+    return skipDisplayFromNote(h.note ?? h.matchLabel).title;
+  }
+  return h.matchLabel ?? h.note ?? "—";
+}
+
+function historyDetail(h: HistoryEntry): string {
+  if (h.outcome === "skip") {
+    return skipDisplayFromNote(h.note ?? h.matchLabel).detail;
+  }
+  const parts: string[] = [];
+  if (h.marketLabel) parts.push(h.marketLabel);
+  else if (h.outcome === "pending" && h.note) parts.push(h.note);
+  if (h.score != null) parts.push(`score ${h.score.toFixed(0)}`);
+  if (h.odds != null) parts.push(`@${h.odds.toFixed(2)}`);
+  if (h.modelProb != null) parts.push(`p ${(h.modelProb * 100).toFixed(0)}%`);
+  if (h.oddsSource === "book" && h.edge != null) {
+    parts.push(`edge ${(h.edge * 100).toFixed(1)}pp`);
+  }
+  return parts.join(" · ");
 }
 
 function pct(n: number | null | undefined): string {
@@ -245,34 +271,28 @@ export default function RachaPage() {
             Sin apuestas aún. El próximo ciclo va a aparecer acá.
           </p>
         ) : (
-          rows.slice(0, 40).map((h) => (
+          rows.slice(0, 40).map((h) => {
+            const detail = historyDetail(h);
+            return (
             <div key={h.id} className="px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className={`pill ${outcomePill(h.outcome)}`}>
                   {outcomeLabel(h.outcome)}
                 </span>
-                <span className="pill pill-auto">
-                  {h.oddsSource === "book" ? "BOOK" : "REAL"}
-                </span>
+                {h.outcome !== "skip" ? (
+                  <span className="pill pill-auto">
+                    {h.oddsSource === "book" ? "BOOK" : "REAL"}
+                  </span>
+                ) : null}
                 <p className="truncate text-[15px] font-medium">
-                  {h.matchLabel ?? h.note ?? "—"}
+                  {historyTitle(h)}
                 </p>
               </div>
-              <p className="mt-1 text-[13px] text-[var(--muted)]">
-                {h.marketLabel ||
-                  (h.outcome === "skip" || h.outcome === "pending"
-                    ? h.note
-                    : "") ||
-                  ""}
-                {h.score != null ? ` · score ${h.score.toFixed(0)}` : ""}
-                {h.odds != null ? ` · @${h.odds.toFixed(2)}` : ""}
-                {h.modelProb != null
-                  ? ` · p ${(h.modelProb * 100).toFixed(0)}%`
-                  : ""}
-                {h.oddsSource === "book" && h.edge != null
-                  ? ` · edge ${(h.edge * 100).toFixed(1)}pp`
-                  : ""}
-              </p>
+              {detail ? (
+                <p className="mt-1 text-[13px] text-[var(--muted)]">
+                  {detail}
+                </p>
+              ) : null}
               <p className="mt-1 text-[12px] text-[var(--muted)]">
                 {formatBetWhen(h.hourKey, h.at, state.settings.timezone)}
               </p>
@@ -290,7 +310,8 @@ export default function RachaPage() {
                 />
               ) : null}
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

@@ -3,7 +3,7 @@ import {
   lessonEffects,
   pruneLessons,
 } from "./autopsy";
-import { consecutiveLossCount } from "./metrics";
+import { consecutiveLossCount } from "./loss-streak";
 import {
   STAKE_BASE,
   STREAK_GOAL,

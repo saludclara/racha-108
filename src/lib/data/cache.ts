@@ -41,7 +41,7 @@ export const CACHE_TTL = {
   espn: 45_000,
   /** Free plan ~100 req/day — one window key */
   apiFootball: 30 * 60_000,
-  /** Book prices — 3 min */
-  oddsApi: 3 * 60_000,
+  /** Book prices — 12 min (free-tier credit safe; grind band is stable) */
+  oddsApi: 12 * 60_000,
   pandascore: 2 * 60_000,
 } as const;

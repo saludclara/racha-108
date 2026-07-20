@@ -8,82 +8,10 @@ import {
   consecutiveLossCount,
   formatBetWhen,
   isTiltActive,
+  parseSkipCode,
+  skipDisplay,
 } from "@/lib/engine";
 import { useApp } from "@/lib/store";
-
-type SkipCode =
-  | "empty_pool"
-  | "no_book"
-  | "deep_live"
-  | "edge"
-  | "decided"
-  | "threshold"
-  | "unknown";
-
-function parseSkipCode(message: string | null | undefined): SkipCode {
-  if (!message) return "unknown";
-  if (message.includes("empty_pool")) return "empty_pool";
-  if (message.includes("no_book")) return "no_book";
-  if (message.includes("deep_live")) return "deep_live";
-  if (message.includes("decided")) return "decided";
-  if (message.includes("threshold")) return "threshold";
-  if (message.includes("edge")) return "edge";
-  if (/SKIP/i.test(message)) return "unknown";
-  return "unknown";
-}
-
-function skipCopy(code: SkipCode): {
-  title: string;
-  body: string;
-  tip: string;
-  tipHref?: string;
-} {
-  switch (code) {
-    case "no_book":
-      return {
-        title: "Sin cuota bookmaker",
-        body: "El motor no coloca HotStack sin odds reales en banda 1.30–1.90. ESPN solo no alcanza.",
-        tip: "Activá The Odds API en Ajustes (clave free).",
-        tipHref: "/settings",
-      };
-    case "empty_pool":
-      return {
-        title: "Sin partidos en ventana",
-        body: "No hay live temprano ni kickoff ≤6h liquidables ahora. HotStack queda libre.",
-        tip: "El próximo ciclo vuelve a mirar el feed solo.",
-      };
-    case "deep_live":
-      return {
-        title: "Solo finales / live profundo",
-        body: "Había partidos, pero ya pasaron el minuto seguro. No cazamos 1X/Under decididos.",
-        tip: "Esperá kickoffs frescos en el próximo ciclo.",
-      };
-    case "edge":
-      return {
-        title: "Sin edge suficiente",
-        body: "Había book, pero el edge o la p_model no pasaron el filtro (más duro tras losses).",
-        tip: "SKIP también es una decisión del motor.",
-      };
-    case "decided":
-      return {
-        title: "Mercado ya cerrado",
-        body: "El marcador ya liquidaba el mercado al elegir. No hay win sin riesgo.",
-        tip: "HotStack intacto · siguiente ciclo limpio.",
-      };
-    case "threshold":
-      return {
-        title: "No llega a preferencia",
-        body: "Había book+edge, pero el grind score quedó bajo el umbral de este ciclo.",
-        tip: "Tras losses el umbral sube a propósito.",
-      };
-    default:
-      return {
-        title: "Ciclo en SKIP",
-        body: "No hubo pick BOOK con edge este ciclo. HotStack intacto.",
-        tip: "Reconsultá el feed o esperá el countdown.",
-      };
-  }
-}
 
 function statusTone(
   kind: "skip" | "pending" | "win" | "loss" | "push" | "idle",
@@ -124,7 +52,13 @@ export default function PickPage() {
     (!pending && !resolved && !skipped);
 
   const skipCode = parseSkipCode(apiMessage ?? last?.note);
-  const skip = skipCopy(skipCode);
+  const skipMeta = skipDisplay(skipCode);
+  const skip = {
+    title: skipMeta.title,
+    body: skipMeta.detail,
+    tip: skipMeta.tip ?? "",
+    tipHref: skipMeta.tipHref,
+  };
   const lossStreak = consecutiveLossCount(state.history);
   const tiltOn = tiltActive || isTiltActive(state.tiltGuardUntil);
   const oddsSource = sources.find((s) => s.id === "odds-api");
@@ -158,7 +92,7 @@ export default function PickPage() {
             : mode === "resolved"
               ? "Liquidado"
               : mode === "skip"
-                ? "SKIP del ciclo"
+                ? skip.title
                 : "Apuesta del ciclo"}
         </h1>
       </header>

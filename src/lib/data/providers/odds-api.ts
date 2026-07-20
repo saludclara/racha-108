@@ -4,12 +4,7 @@ import {
   buildTeamStatsFromForm,
   markBookOdds,
 } from "@/lib/data/odds-model";
-import {
-  MAX_ODDS,
-  MIN_ODDS,
-  type MarketType,
-  type MatchCandidate,
-} from "@/lib/engine/types";
+import type { MarketType, MatchCandidate } from "@/lib/engine/types";
 import type { FetchOptions, MatchProvider, ProviderResult } from "./types";
 
 const BASE = "https://api.the-odds-api.com/v4";
@@ -30,29 +25,115 @@ type OddsEvent = {
   bookmakers?: OddsBookmaker[];
 };
 
-/** Map bookmaker markets into our grind MarketTypes when possible. */
+/** Prefer shortest book price (conservative for edge). */
+function takeShorter(
+  cur: number | undefined,
+  price: number,
+): number {
+  return Math.min(cur ?? 99, price);
+}
+
+/**
+ * Derive DC 1X / DNB from h2h book prices (de-vigged).
+ * Still tagged book — sourced from real bookmaker h2h, not model.
+ */
+function deriveFromH2h(
+  homePrice: number,
+  drawPrice: number,
+  awayPrice: number | undefined,
+): Partial<Record<MarketType, number>> {
+  const pH = 1 / homePrice;
+  const pD = 1 / drawPrice;
+  const pA = awayPrice != null && awayPrice > 1 ? 1 / awayPrice : 0;
+  const sum = pH + pD + pA;
+  if (!(sum > 0)) return {};
+  const fH = pH / sum;
+  const fD = pD / sum;
+  const fA = pA / sum;
+  const out: Partial<Record<MarketType, number>> = {};
+  const dc = 1 / (fH + fD);
+  if (Number.isFinite(dc) && dc > 1) out.double_chance_1x = dc;
+  if (fH > 0 && fA >= 0) {
+    const dnb = 1 / (fH / (fH + fA));
+    if (Number.isFinite(dnb) && dnb > 1) out.draw_no_bet_home = dnb;
+  }
+  return out;
+}
+
+/** Map bookmaker markets into grind MarketTypes (band filtered later in score). */
 function extractGrindOdds(
   event: OddsEvent,
 ): Partial<Record<MarketType, number>> {
   const odds: Partial<Record<MarketType, number>> = {};
   const books = event.bookmakers ?? [];
+
   for (const book of books) {
     for (const market of book.markets) {
       if (market.key === "h2h") {
         const home = market.outcomes.find((o) => o.name === event.home_team);
-        if (home && home.price >= MIN_ODDS && home.price <= MAX_ODDS) {
-          odds.home_win = Math.min(odds.home_win ?? 99, home.price);
+        const draw = market.outcomes.find(
+          (o) => o.name.toLowerCase() === "draw",
+        );
+        const away = market.outcomes.find((o) => o.name === event.away_team);
+        if (home && home.price > 1) {
+          odds.home_win = takeShorter(odds.home_win, home.price);
+        }
+        if (home && draw && home.price > 1 && draw.price > 1) {
+          const derived = deriveFromH2h(
+            home.price,
+            draw.price,
+            away?.price,
+          );
+          if (derived.double_chance_1x != null) {
+            odds.double_chance_1x = takeShorter(
+              odds.double_chance_1x,
+              derived.double_chance_1x,
+            );
+          }
+          if (derived.draw_no_bet_home != null) {
+            odds.draw_no_bet_home = takeShorter(
+              odds.draw_no_bet_home,
+              derived.draw_no_bet_home,
+            );
+          }
         }
       }
+
       if (market.key === "totals") {
         for (const o of market.outcomes) {
           if (o.name.toLowerCase() !== "under" || o.point == null) continue;
-          if (o.point === 3.5 && o.price >= MIN_ODDS && o.price <= MAX_ODDS) {
-            odds.under_35 = Math.min(odds.under_35 ?? 99, o.price);
+          if (o.price <= 1) continue;
+          if (o.point === 3.5) {
+            odds.under_35 = takeShorter(odds.under_35, o.price);
           }
-          if (o.point === 2.5 && o.price >= MIN_ODDS && o.price <= MAX_ODDS) {
-            odds.under_25 = Math.min(odds.under_25 ?? 99, o.price);
+          if (o.point === 2.5) {
+            odds.under_25 = takeShorter(odds.under_25, o.price);
           }
+        }
+      }
+
+      if (market.key === "spreads") {
+        const home = market.outcomes.find((o) => o.name === event.home_team);
+        if (!home || home.price <= 1 || home.point == null) continue;
+        if (home.point === -0.5) {
+          odds.ah_home_m05 = takeShorter(odds.ah_home_m05, home.price);
+        }
+        if (home.point === -0.25) {
+          odds.ah_home_m025 = takeShorter(odds.ah_home_m025, home.price);
+        }
+        // Point 0 ≈ DNB home when spreads offer it
+        if (home.point === 0) {
+          odds.draw_no_bet_home = takeShorter(
+            odds.draw_no_bet_home,
+            home.price,
+          );
+        }
+      }
+
+      if (market.key === "btts") {
+        const no = market.outcomes.find((o) => o.name.toLowerCase() === "no");
+        if (no && no.price > 1) {
+          odds.btts_no = takeShorter(odds.btts_no, no.price);
         }
       }
     }
@@ -86,42 +167,76 @@ function toCandidate(event: OddsEvent): MatchCandidate | null {
   return match;
 }
 
-async function fetchSoccerOdds(key: string): Promise<MatchCandidate[]> {
-  // Curated free-tier set (1 credit per sport). Cache keeps monthly quota safe.
-  const sports = [
-    "soccer_epl",
-    "soccer_spain_la_liga",
-    "soccer_usa_mls",
-    "soccer_australia_aleague",
-    "soccer_uefa_champs_league",
-    "soccer_germany_bundesliga",
-  ];
+/**
+ * Curated free-tier set — 1 credit unit = markets × regions per sport.
+ * regions=eu only + 12 sports × (h2h,totals,spreads) ≈ same burn as old 6×3×2.
+ */
+const SOCCER_SPORTS = [
+  "soccer_epl",
+  "soccer_spain_la_liga",
+  "soccer_italy_serie_a",
+  "soccer_germany_bundesliga",
+  "soccer_france_ligue_one",
+  "soccer_netherlands_eredivisie",
+  "soccer_usa_mls",
+  "soccer_australia_aleague",
+  "soccer_mexico_ligamx",
+  "soccer_brazil_campeonato",
+  "soccer_uefa_champs_league",
+  "soccer_efl_champ",
+] as const;
 
+async function fetchSoccerOdds(key: string): Promise<MatchCandidate[]> {
   const seen = new Set<string>();
   const out: MatchCandidate[] = [];
+  let lastError: string | undefined;
 
   await Promise.all(
-    sports.map(async (sport) => {
+    SOCCER_SPORTS.map(async (sport) => {
       try {
         const url =
-          `${BASE}/sports/${sport}/odds?regions=au,eu,uk&markets=h2h,totals&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`;
+          `${BASE}/sports/${sport}/odds?regions=eu&markets=h2h,totals,spreads&oddsFormat=decimal&apiKey=${encodeURIComponent(key)}`;
         const res = await fetch(url, {
           headers: { "User-Agent": "racha-108/1.0" },
           cache: "no-store",
         });
-        if (!res.ok) return;
-        const events = (await res.json()) as OddsEvent[];
+        const body: unknown = await res.json();
+        if (!res.ok) {
+          const msg =
+            typeof body === "object" &&
+            body &&
+            "message" in body &&
+            typeof (body as { message: unknown }).message === "string"
+              ? (body as { message: string }).message
+              : `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+        if (!Array.isArray(body)) {
+          const msg =
+            typeof body === "object" &&
+            body &&
+            "message" in body &&
+            typeof (body as { message: unknown }).message === "string"
+              ? (body as { message: string }).message
+              : "Odds API: respuesta inválida";
+          throw new Error(msg);
+        }
+        const events = body as OddsEvent[];
         for (const ev of events) {
           const m = toCandidate({ ...ev, sport_key: sport });
           if (!m || seen.has(m.id)) continue;
           seen.add(m.id);
           out.push(m);
         }
-      } catch {
-        // ignore sport failures
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : "Odds API failed";
       }
     }),
   );
+
+  if (!out.length && lastError) {
+    throw new Error(lastError);
+  }
 
   return out;
 }
@@ -163,7 +278,7 @@ export const oddsApiProvider: MatchProvider = {
 
     try {
       const matches = await withCache(
-        "odds:soccer",
+        "odds:soccer:v2",
         CACHE_TTL.oddsApi,
         () => fetchSoccerOdds(key),
       );

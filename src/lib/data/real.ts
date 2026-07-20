@@ -4,28 +4,20 @@ import {
 } from "@/lib/data/providers/registry";
 import type { SourceStatus } from "@/lib/data/providers/types";
 import { isDeepLive } from "@/lib/engine/eligibility";
+import { ALLOWED_MARKETS, isOddsInRange } from "@/lib/engine/markets";
 import { CYCLE_MS } from "@/lib/engine/schedule";
 import {
   choosePickForHour,
   type PickBestOptions,
   type SkipReason,
 } from "@/lib/engine/score";
+import { skipMessageForReason } from "@/lib/engine/skip-copy";
 import { settleFromScores, settlePick } from "@/lib/engine/settle";
 import type { MatchCandidate, ScoredPick } from "@/lib/engine/types";
 
-const SKIP_COPY: Record<SkipReason, string> = {
-  empty_pool:
-    "SKIP · empty_pool · sin candidatos en ventana. HotStack intacto.",
-  no_book:
-    "SKIP · no_book · sin cuotas book en banda 1.30–1.90. HotStack intacto.",
-  deep_live:
-    "SKIP · deep_live · solo finales / live profundo. HotStack intacto.",
-  edge: "SKIP · edge · book sin edge/prob suficientes. HotStack intacto.",
-  decided:
-    "SKIP · decided · mercado ya cerrado por marcador. HotStack intacto.",
-  threshold:
-    "SKIP · threshold · book no llega a preferencia de score. HotStack intacto.",
-};
+function skipCopy(reason: SkipReason): string {
+  return skipMessageForReason(reason);
+}
 
 /** Tolerate FT landing within this cycle + one more (keeps HotStack turning). */
 export const SETTLE_SLACK_MS = CYCLE_MS;
@@ -166,20 +158,23 @@ export function settleableForCycle(
   return [];
 }
 
-/**
- * Prefer settleable (live), then kickoff ≤6h.
- * Never day/wide — those locked HotStack for days on one pick.
- */
-export function candidatePoolForCycle(
-  candidates: MatchCandidate[],
-  now: Date,
-): { pool: MatchCandidate[]; tier: "settleable" | "near" | "empty" } {
-  const open = candidates.filter((m) => isFreshEnough(m, now));
-  const settleable = settleableForCycle(open, now);
-  if (settleable.length) return { pool: settleable, tier: "settleable" };
+/** True if match has at least one grind market with real book odds in band. */
+export function hasBookInBand(m: MatchCandidate): boolean {
+  for (const market of ALLOWED_MARKETS) {
+    const o = m.odds[market];
+    if (o == null) continue;
+    if (m.oddsSource?.[market] !== "book") continue;
+    if (isOddsInRange(o)) return true;
+  }
+  return false;
+}
 
+function nearKickoffPool(
+  open: MatchCandidate[],
+  now: Date,
+): MatchCandidate[] {
   const t = now.getTime();
-  const near = open.filter((m) => {
+  return open.filter((m) => {
     if (m.status === "inplay") return !isDeepLive(m, now);
     const kick = kickoffMs(m);
     return (
@@ -188,6 +183,29 @@ export function candidatePoolForCycle(
       kick <= t + NEAR_KICKOFF_MS
     );
   });
+}
+
+/**
+ * Prefer settleable (live) **with book**, else near kickoff with book,
+ * else settleable/near raw (so diagnose can still say no_book).
+ * Never day/wide — those locked HotStack for days on one pick.
+ */
+export function candidatePoolForCycle(
+  candidates: MatchCandidate[],
+  now: Date,
+): { pool: MatchCandidate[]; tier: "settleable" | "near" | "empty" } {
+  const open = candidates.filter((m) => isFreshEnough(m, now));
+  const settleable = settleableForCycle(open, now);
+  const near = nearKickoffPool(open, now);
+
+  const settleBook = settleable.filter(hasBookInBand);
+  if (settleBook.length) return { pool: settleBook, tier: "settleable" };
+
+  const nearBook = near.filter(hasBookInBand);
+  if (nearBook.length) return { pool: nearBook, tier: "near" };
+
+  // No book anywhere in window — keep live/near so SKIP reason stays honest
+  if (settleable.length) return { pool: settleable, tier: "settleable" };
   if (near.length) return { pool: near, tier: "near" };
 
   return { pool: [], tier: "empty" };
@@ -340,7 +358,7 @@ export function buildHourlyPickFromMatches(
       message:
         all.length === 0
           ? "No se pudieron obtener partidos ahora. Reintentá en un minuto."
-          : SKIP_COPY.empty_pool,
+          : skipCopy("empty_pool"),
       fetchedAt: now.toISOString(),
     };
   }
@@ -363,7 +381,7 @@ export function buildHourlyPickFromMatches(
       settle: null,
       matchCount: pool.length,
       sources,
-      message: SKIP_COPY[skipReason ?? "no_book"],
+      message: skipCopy(skipReason ?? "no_book"),
       fetchedAt: now.toISOString(),
     };
   }
@@ -381,7 +399,7 @@ export function buildHourlyPickFromMatches(
       settle: null,
       matchCount: pool.length,
       sources,
-      message: SKIP_COPY.decided,
+      message: skipCopy("decided"),
       fetchedAt: now.toISOString(),
     };
   }

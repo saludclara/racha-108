@@ -149,6 +149,16 @@ function buildShareUrl(runId: string): string {
 
 type RunPayload = { id: string; state: AppState; updatedAt: string };
 
+type LoadRunResult =
+  | { kind: "ok"; payload: RunPayload }
+  | { kind: "missing" }
+  | { kind: "unconfigured" }
+  | { kind: "rate_limited" }
+  | { kind: "failed" };
+
+const REMOTE_SYNC_MS = 20_000;
+const REMOTE_SYNC_PENDING_MS = 8_000;
+
 async function apiCreateRun(state: AppState): Promise<RunPayload | null | "unconfigured"> {
   const res = await fetch("/api/run", {
     method: "POST",
@@ -157,6 +167,7 @@ async function apiCreateRun(state: AppState): Promise<RunPayload | null | "uncon
     cache: "no-store",
   });
   if (res.status === 503) return "unconfigured";
+  if (res.status === 429) return null;
   if (!res.ok) throw new Error(`create run ${res.status}`);
   return (await res.json()) as RunPayload;
 }
@@ -167,20 +178,30 @@ async function bootstrapCloud(local: AppState): Promise<CloudBoot> {
     cloudBootstrapPromise = (async (): Promise<CloudBoot> => {
       const existingId = readStoredRunId();
       if (existingId) {
-        try {
-          const remote = await apiLoadRun(existingId);
-          if (remote) {
-            persistRunId(remote.id);
-            return {
-              durable: true,
-              runId: remote.id,
-              updatedAt: remote.updatedAt,
-              state: remote.state,
-              cloudConfigured: true,
-            };
-          }
-        } catch {
-          // fall through to create/retry
+        const loaded = await apiLoadRun(existingId);
+        if (loaded.kind === "ok") {
+          const remote = loaded.payload;
+          persistRunId(remote.id);
+          return {
+            durable: true,
+            runId: remote.id,
+            updatedAt: remote.updatedAt,
+            state: remote.state,
+            cloudConfigured: true,
+          };
+        }
+        if (
+          loaded.kind === "rate_limited" ||
+          loaded.kind === "failed"
+        ) {
+          persistRunId(existingId);
+          return {
+            durable: true,
+            runId: existingId,
+            updatedAt: null,
+            state: local,
+            cloudConfigured: true,
+          };
         }
       }
 
@@ -223,14 +244,15 @@ async function bootstrapCloud(local: AppState): Promise<CloudBoot> {
   return cloudBootstrapPromise;
 }
 
-async function apiLoadRun(id: string): Promise<RunPayload | null> {
+async function apiLoadRun(id: string): Promise<LoadRunResult> {
   const res = await fetch(`/api/run?id=${encodeURIComponent(id)}`, {
     cache: "no-store",
   });
-  if (res.status === 503) return null;
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`load run ${res.status}`);
-  return (await res.json()) as RunPayload;
+  if (res.status === 503) return { kind: "unconfigured" };
+  if (res.status === 404) return { kind: "missing" };
+  if (res.status === 429) return { kind: "rate_limited" };
+  if (!res.ok) return { kind: "failed" };
+  return { kind: "ok", payload: (await res.json()) as RunPayload };
 }
 
 async function apiSaveRun(
@@ -253,6 +275,7 @@ async function apiSaveRun(
     cache: "no-store",
   });
   if (res.status === 503) return "unavailable";
+  if (res.status === 429) return "unavailable";
   if (res.status === 409) {
     const body = (await res.json()) as RunPayload;
     return { kind: "conflict", payload: body };
@@ -364,6 +387,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const runIdRef = useRef<string | null>(null);
   const updatedAtRef = useRef<string | null>(null);
   const bootstrappedRef = useRef(false);
+  const lastRemoteSyncRef = useRef(0);
 
   const threshold = useMemo(
     () =>
@@ -503,15 +527,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
         let working = state;
         const id = runIdRef.current;
 
-        // Durable: pull cron/server state first so open tab = closed-tab truth
+        // Durable: pull cron/server state (throttled — avoid 429 on fast ticks)
         if (id && durableEnabled) {
-          const remote = await apiLoadRun(id);
-          if (cancelled) return;
-          if (remote) {
-            working = adoptCloudState(state, remote.state);
-            updatedAtRef.current = remote.updatedAt;
-            setState(working);
-            saveLocalState(working);
+          const syncGap =
+            state.pickStatus === "pending"
+              ? REMOTE_SYNC_PENDING_MS
+              : REMOTE_SYNC_MS;
+          const due =
+            Date.now() - lastRemoteSyncRef.current >= syncGap;
+          if (due) {
+            lastRemoteSyncRef.current = Date.now();
+            const loaded = await apiLoadRun(id);
+            if (cancelled) return;
+            if (loaded.kind === "ok") {
+              const remote = loaded.payload;
+              working = adoptCloudState(state, remote.state);
+              updatedAtRef.current = remote.updatedAt;
+              setState(working);
+              saveLocalState(working);
+            } else if (loaded.kind === "rate_limited") {
+              lastRemoteSyncRef.current =
+                Date.now() - syncGap + 5_000;
+            }
           }
         }
 

@@ -3,8 +3,8 @@ export const STREAK_GOAL = 108;
 export const DEFAULT_SCORE_THRESHOLD = 82;
 export const TILT_GUARD_HOURS = 6;
 /** Book value band — model fills use a separate fairOdds clamp. */
-export const MIN_ODDS = 1.3;
-export const MAX_ODDS = 1.9;
+export const MIN_ODDS = 1.1;
+export const MAX_ODDS = 1.5;
 export const DEFAULT_TIMEZONE = "Australia/Sydney";
 
 export type MarketType =
