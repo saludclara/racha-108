@@ -1,7 +1,14 @@
-import type { AppState, BetOutcome, HistoryEntry, VaultDeposit } from "@/lib/engine";
+import type {
+  AppState,
+  BetOutcome,
+  HistoryEntry,
+  Lesson,
+  VaultDeposit,
+} from "@/lib/engine";
 
 const MAX_HISTORY = 200;
 const MAX_LEDGER = 100;
+const MAX_LESSONS = 40;
 
 const OUTCOME_RANK: Record<BetOutcome, number> = {
   win: 4,
@@ -70,6 +77,18 @@ export function mergeVaultLedger(
     .slice(0, MAX_LEDGER);
 }
 
+export function mergeLessons(a: Lesson[] = [], b: Lesson[] = []): Lesson[] {
+  const byId = new Map<string, Lesson>();
+  for (const row of [...a, ...b]) {
+    if (!row?.id) continue;
+    const prev = byId.get(row.id);
+    if (!prev || row.createdAt >= prev.createdAt) byId.set(row.id, row);
+  }
+  return [...byId.values()]
+    .sort((x, y) => (y.createdAt < x.createdAt ? -1 : y.createdAt > x.createdAt ? 1 : 0))
+    .slice(0, MAX_LESSONS);
+}
+
 /**
  * Adopt live bankroll/pick fields from `remote`, but never drop unique
  * history / ledger rows that only exist on `local`.
@@ -78,6 +97,7 @@ export function adoptCloudState(local: AppState, remote: AppState): AppState {
   return {
     ...remote,
     history: mergeHistory(local.history, remote.history),
+    lessons: mergeLessons(local.lessons, remote.lessons),
     vaultLedger: mergeVaultLedger(local.vaultLedger, remote.vaultLedger),
     bestStreak: Math.max(local.bestStreak, remote.bestStreak),
     createdAt:

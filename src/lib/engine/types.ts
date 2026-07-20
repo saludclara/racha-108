@@ -109,6 +109,49 @@ export interface VaultDeposit {
   note: string;
 }
 
+/** Dominant cause from Autopsia 1L (one loss → one cause). */
+export type LessonCause =
+  | "EDGE_FALSO"
+  | "MERCADO_TOXICO"
+  | "LIGA_DEBIL"
+  | "CAPA_MENTIRA"
+  | "PROB_HINCHADA"
+  | "TIMING_MALO"
+  | "VARIANCE";
+
+/** Tangible motor action applied after a loss. */
+export type LessonAction =
+  | "coolMarket"
+  | "banMarket"
+  | "banLeague"
+  | "bumpEdge"
+  | "bumpThreshold"
+  | "demoteLayer"
+  | "raiseModelProb";
+
+/** Durable self-improvement scar from one loss. */
+export interface Lesson {
+  id: string;
+  lossHistoryId: string;
+  cause: LessonCause;
+  /** Hypersimple: what happened. */
+  plainWhy: string;
+  /** Hypersimple: what we changed. */
+  plainFix: string;
+  action: LessonAction;
+  /** Market key, league name, layer key, or "global". */
+  target: string;
+  /** Edge/prob bump in absolute units, or 1 for cool/ban. */
+  strength: number;
+  expiresAt: string;
+  createdAt: string;
+  homeScore?: number;
+  awayScore?: number;
+  market?: MarketType;
+  league?: string;
+  matchLabel?: string;
+}
+
 export interface HistoryEntry {
   id: string;
   hourKey: string;
@@ -119,6 +162,8 @@ export interface HistoryEntry {
   payout?: number;
   profit?: number;
   vaultAdded?: number;
+  /** Stable market key for blacklist / demotion (prefer over label). */
+  market?: MarketType;
   marketLabel?: string;
   matchLabel?: string;
   score?: number;
@@ -133,6 +178,13 @@ export interface HistoryEntry {
   league?: string;
   matchId?: string;
   shadowWouldSkip?: boolean;
+  /** Final score snapshot (Autopsia 1L). */
+  homeScore?: number;
+  awayScore?: number;
+  plainWhy?: string;
+  plainFix?: string;
+  lessonId?: string;
+  lessonCause?: LessonCause;
 }
 
 export interface AppSettings {
@@ -155,6 +207,8 @@ export interface AppState {
   tiltGuardUntil: string | null;
   settings: AppSettings;
   history: HistoryEntry[];
+  /** Active + recent Autopsia lessons (pruned by TTL / cap). */
+  lessons: Lesson[];
   vaultLedger: VaultDeposit[];
   currentPick: ScoredPick | null;
   currentHourKey: string | null;
@@ -184,6 +238,7 @@ export function createInitialState(): AppState {
     tiltGuardUntil: null,
     settings: { ...DEFAULT_SETTINGS },
     history: [],
+    lessons: [],
     vaultLedger: [],
     currentPick: null,
     currentHourKey: null,

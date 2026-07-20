@@ -7,6 +7,9 @@ import {
   type DataProvider,
   type HistoryEntry,
   type LayerScore,
+  type Lesson,
+  type LessonAction,
+  type LessonCause,
   type MarketType,
   type OddsSource,
   type ScoredPick,
@@ -16,6 +19,27 @@ import {
 const MAX_HISTORY = 200;
 const MAX_LEDGER = 100;
 const MAX_LAYERS = 12;
+const MAX_LESSONS = 40;
+
+const LESSON_CAUSES = new Set<LessonCause>([
+  "EDGE_FALSO",
+  "MERCADO_TOXICO",
+  "LIGA_DEBIL",
+  "CAPA_MENTIRA",
+  "PROB_HINCHADA",
+  "TIMING_MALO",
+  "VARIANCE",
+]);
+
+const LESSON_ACTIONS = new Set<LessonAction>([
+  "coolMarket",
+  "banMarket",
+  "banLeague",
+  "bumpEdge",
+  "bumpThreshold",
+  "demoteLayer",
+  "raiseModelProb",
+]);
 
 const MARKETS = new Set<MarketType>([
   "home_win",
@@ -237,6 +261,13 @@ function normalizeOddsSource(v: unknown): OddsSource | undefined {
   return undefined;
 }
 
+function normalizeMarket(v: unknown): MarketType | undefined {
+  if (typeof v === "string" && MARKETS.has(v as MarketType)) {
+    return v as MarketType;
+  }
+  return undefined;
+}
+
 function normalizeHistory(raw: unknown): HistoryEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: HistoryEntry[] = [];
@@ -260,6 +291,7 @@ function normalizeHistory(raw: unknown): HistoryEntry[] {
       payout: typeof row.payout === "number" ? row.payout : undefined,
       profit: typeof row.profit === "number" ? row.profit : undefined,
       vaultAdded: typeof row.vaultAdded === "number" ? row.vaultAdded : undefined,
+      market: normalizeMarket(row.market),
       marketLabel: optString(row.marketLabel, 80) ?? undefined,
       matchLabel: optString(row.matchLabel, 200) ?? undefined,
       score: typeof row.score === "number" ? row.score : undefined,
@@ -276,6 +308,75 @@ function normalizeHistory(raw: unknown): HistoryEntry[] {
         typeof row.shadowWouldSkip === "boolean"
           ? row.shadowWouldSkip
           : undefined,
+      homeScore:
+        typeof row.homeScore === "number" ? row.homeScore : undefined,
+      awayScore:
+        typeof row.awayScore === "number" ? row.awayScore : undefined,
+      plainWhy: optString(row.plainWhy, 320) ?? undefined,
+      plainFix: optString(row.plainFix, 320) ?? undefined,
+      lessonId: optString(row.lessonId, 80) ?? undefined,
+      lessonCause:
+        typeof row.lessonCause === "string" &&
+        LESSON_CAUSES.has(row.lessonCause as LessonCause)
+          ? (row.lessonCause as LessonCause)
+          : undefined,
+    });
+  }
+  return out;
+}
+
+function normalizeLessons(raw: unknown): Lesson[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Lesson[] = [];
+  for (const row of raw.slice(0, MAX_LESSONS)) {
+    if (!isPlainObject(row)) continue;
+    const id = optString(row.id, 80);
+    const lossHistoryId = optString(row.lossHistoryId, 80);
+    const cause = row.cause;
+    const action = row.action;
+    const plainWhy = optString(row.plainWhy, 320);
+    const plainFix = optString(row.plainFix, 320);
+    const target = optString(row.target, 160);
+    const expiresAt = optString(row.expiresAt, 64);
+    const createdAt = optString(row.createdAt, 64);
+    if (
+      !id ||
+      !lossHistoryId ||
+      !plainWhy ||
+      !plainFix ||
+      !target ||
+      !expiresAt ||
+      !createdAt
+    ) {
+      continue;
+    }
+    if (typeof cause !== "string" || !LESSON_CAUSES.has(cause as LessonCause)) {
+      continue;
+    }
+    if (
+      typeof action !== "string" ||
+      !LESSON_ACTIONS.has(action as LessonAction)
+    ) {
+      continue;
+    }
+    out.push({
+      id,
+      lossHistoryId,
+      cause: cause as LessonCause,
+      plainWhy,
+      plainFix,
+      action: action as LessonAction,
+      target,
+      strength: finiteNumber(row.strength, 1, 0, 100),
+      expiresAt,
+      createdAt,
+      homeScore:
+        typeof row.homeScore === "number" ? row.homeScore : undefined,
+      awayScore:
+        typeof row.awayScore === "number" ? row.awayScore : undefined,
+      market: normalizeMarket(row.market),
+      league: optString(row.league, 120) ?? undefined,
+      matchLabel: optString(row.matchLabel, 200) ?? undefined,
     });
   }
   return out;
@@ -325,6 +426,7 @@ export function normalizeAppState(raw: unknown): AppState | null {
     tiltGuardUntil: optString(raw.tiltGuardUntil, 64),
     settings: normalizeSettings(raw.settings),
     history: normalizeHistory(raw.history),
+    lessons: normalizeLessons(raw.lessons),
     vaultLedger: normalizeLedger(raw.vaultLedger),
     currentPick: normalizePick(raw.currentPick),
     currentHourKey: optString(raw.currentHourKey, 80),

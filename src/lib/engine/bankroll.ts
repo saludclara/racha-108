@@ -1,10 +1,17 @@
 import {
+  buildLossLesson,
+  lessonEffects,
+  pruneLessons,
+} from "./autopsy";
+import { consecutiveLossCount } from "./metrics";
+import {
   STAKE_BASE,
   STREAK_GOAL,
   TILT_GUARD_HOURS,
   type AppSettings,
   type AppState,
   type HistoryEntry,
+  type Lesson,
   type ScoredPick,
   type VaultDeposit,
 } from "./types";
@@ -26,12 +33,21 @@ export function effectiveThreshold(
   settings: AppSettings,
   tiltGuardUntil: string | null,
   now = new Date(),
+  history: HistoryEntry[] = [],
+  lessons: Lesson[] = [],
 ): number {
-  if (!tiltGuardUntil) return settings.scoreThreshold;
-  if (now.getTime() < new Date(tiltGuardUntil).getTime()) {
-    return Math.min(98, settings.scoreThreshold + 6);
+  let bump = 0;
+  if (
+    tiltGuardUntil &&
+    now.getTime() < new Date(tiltGuardUntil).getTime()
+  ) {
+    bump += 6;
   }
-  return settings.scoreThreshold;
+  // 2+ losses in a row → demand a clearer grind score
+  if (consecutiveLossCount(history) >= 2) bump += 4;
+  bump += lessonEffects(lessons, now).thresholdBump;
+  if (!bump) return settings.scoreThreshold;
+  return Math.min(98, settings.scoreThreshold + bump);
 }
 
 export function isTiltActive(
@@ -55,6 +71,7 @@ function prependHistory(
 
 function pickTelemetry(pick: ScoredPick): Partial<HistoryEntry> {
   return {
+    market: pick.market,
     modelProb: pick.modelProb,
     edge: pick.edge,
     bookOdds: pick.bookOdds,
@@ -163,10 +180,16 @@ export function applyLoss(
   now = new Date(),
 ): AppState {
   const stake = state.hotStack;
-  const tiltUntil = new Date(now.getTime() + TILT_GUARD_HOURS * 60 * 60 * 1000);
+  // Trailing losses before this one + this L
+  const lossStreak = consecutiveLossCount(state.history) + 1;
+  const tiltHours =
+    lossStreak >= 2 ? TILT_GUARD_HOURS * 2 : TILT_GUARD_HOURS;
+  const tiltUntil = new Date(now.getTime() + tiltHours * 60 * 60 * 1000);
+  const lossId = `bet-${now.getTime()}`;
+  const lesson = buildLossLesson(pick, state.history, lossId, now);
 
   const entry: HistoryEntry = {
-    id: `bet-${now.getTime()}`,
+    id: lossId,
     hourKey: pick.hourKey,
     at: now.toISOString(),
     outcome: "loss",
@@ -175,11 +198,21 @@ export function applyLoss(
     payout: 0,
     profit: roundMoney(-stake),
     vaultAdded: 0,
+    market: pick.market,
     marketLabel: pick.marketLabel,
     matchLabel: `${pick.match.home.name} vs ${pick.match.away.name}`,
     score: pick.totalScore,
     layers: pick.layers,
-    note: `Loss protocol: HotStack reset. Vault intacto. Tilt ${TILT_GUARD_HOURS}h (+score y gates EV).`,
+    homeScore: pick.match.homeScore,
+    awayScore: pick.match.awayScore,
+    plainWhy: lesson.plainWhy,
+    plainFix: lesson.plainFix,
+    lessonId: lesson.id,
+    lessonCause: lesson.cause,
+    note:
+      lossStreak >= 2
+        ? `Autopsia ×${lossStreak}: ${lesson.cause} · Tilt ${tiltHours}h · HotStack reset.`
+        : `Autopsia 1L: ${lesson.cause} · Tilt ${tiltHours}h · HotStack reset.`,
     ...pickTelemetry(pick),
   };
 
@@ -189,6 +222,7 @@ export function applyLoss(
     streak: 0,
     tiltGuardUntil: tiltUntil.toISOString(),
     history: prependHistory(state.history, entry),
+    lessons: pruneLessons([lesson, ...(state.lessons ?? [])], now),
     pickStatus: "resolved",
     lastResolvedHourKey: pick.hourKey,
     currentPick: pick,

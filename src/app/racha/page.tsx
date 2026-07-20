@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LessonCard } from "@/components/LessonCard";
 import {
   STREAK_GOAL,
   computeMotorMetrics,
@@ -275,6 +276,19 @@ export default function RachaPage() {
               <p className="mt-1 text-[12px] text-[var(--muted)]">
                 {formatBetWhen(h.hourKey, h.at, state.settings.timezone)}
               </p>
+              {h.outcome === "loss" && (h.plainWhy || h.plainFix) ? (
+                <LessonCard
+                  compact
+                  plainWhy={h.plainWhy}
+                  plainFix={h.plainFix}
+                  cause={h.lessonCause}
+                  homeScore={h.homeScore}
+                  awayScore={h.awayScore}
+                  expiresAt={
+                    state.lessons.find((l) => l.id === h.lessonId)?.expiresAt
+                  }
+                />
+              ) : null}
             </div>
           ))
         )}

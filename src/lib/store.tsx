@@ -25,6 +25,7 @@ import {
 import type { HourlyPickResponse } from "@/lib/data/real";
 import type { SourceStatus } from "@/lib/data/providers/types";
 import { adoptCloudState } from "@/lib/runs/merge";
+import { normalizeAppState } from "@/lib/runs/normalize";
 
 const STORAGE_KEY = "racha-108-state-v4-real";
 const LEGACY_STORAGE_KEYS = [
@@ -68,15 +69,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 function parseStoredState(raw: string): AppState | null {
   try {
-    const parsed = JSON.parse(raw) as AppState;
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      ...createInitialState(),
-      ...parsed,
-      settings: { ...createInitialState().settings, ...parsed.settings },
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-      vaultLedger: Array.isArray(parsed.vaultLedger) ? parsed.vaultLedger : [],
-    };
+    return normalizeAppState(JSON.parse(raw) as unknown);
   } catch {
     return null;
   }
@@ -272,7 +265,11 @@ async function fetchHourly(
   hourKey: string,
   threshold: number,
   settings: AppSettings,
-  opts?: { tiltActive?: boolean; history?: AppState["history"] },
+  opts?: {
+    tiltActive?: boolean;
+    history?: AppState["history"];
+    lessons?: AppState["lessons"];
+  },
 ): Promise<HourlyPickResponse> {
   const res = await fetch("/api/hourly", {
     method: "POST",
@@ -283,10 +280,26 @@ async function fetchHourly(
       tiltActive: opts?.tiltActive === true,
       history: (opts?.history ?? []).slice(0, 100).map((h) => ({
         outcome: h.outcome,
+        market: h.market,
+        marketLabel: h.marketLabel,
         league: h.league,
         provider: h.provider,
         edge: h.edge,
         modelProb: h.modelProb,
+      })),
+      lessons: (opts?.lessons ?? []).slice(0, 40).map((l) => ({
+        id: l.id,
+        lossHistoryId: l.lossHistoryId,
+        cause: l.cause,
+        plainWhy: l.plainWhy,
+        plainFix: l.plainFix,
+        action: l.action,
+        target: l.target,
+        strength: l.strength,
+        expiresAt: l.expiresAt,
+        createdAt: l.createdAt,
+        market: l.market,
+        league: l.league,
       })),
       apiFootball: settings.enableApiFootball,
       oddsApi: settings.enableOddsApi,
@@ -353,8 +366,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const bootstrappedRef = useRef(false);
 
   const threshold = useMemo(
-    () => effectiveThreshold(state.settings, state.tiltGuardUntil),
-    [state.settings, state.tiltGuardUntil],
+    () =>
+      effectiveThreshold(
+        state.settings,
+        state.tiltGuardUntil,
+        new Date(),
+        state.history,
+        state.lessons,
+      ),
+    [state.settings, state.tiltGuardUntil, state.history, state.lessons],
   );
 
   const tiltActive = isTiltActive(state.tiltGuardUntil);
@@ -499,6 +519,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const th = effectiveThreshold(
           working.settings,
           working.tiltGuardUntil,
+          new Date(),
+          working.history,
+          working.lessons,
         );
 
         let data: HourlyPickResponse;
@@ -529,9 +552,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
 
           const pickCycle = working.currentHourKey ?? data.hourKey;
-          setState((s) =>
-            applyHourlyResult(adoptCloudState(s, working), pickCycle, data),
-          );
+          let settled: AppState | null = null;
+          setState((s) => {
+            settled = applyHourlyResult(
+              adoptCloudState(s, working),
+              pickCycle,
+              data,
+            );
+            return settled;
+          });
           if (cancelled) return;
 
           if (pickCycle === cycleKey) {
@@ -541,10 +570,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return;
           }
 
-          // Settled an older cycle → choose current cycle (same API as cron)
-          data = await fetchHourly(cycleKey, th, working.settings, {
+          // Settled an older cycle → pick current with post-loss Autopsia state
+          working = settled ?? applyHourlyResult(working, pickCycle, data);
+          const thAfter = effectiveThreshold(
+            working.settings,
+            working.tiltGuardUntil,
+            new Date(),
+            working.history,
+            working.lessons,
+          );
+          data = await fetchHourly(cycleKey, thAfter, working.settings, {
             tiltActive: isTiltActive(working.tiltGuardUntil),
             history: working.history,
+            lessons: working.lessons,
           });
         } else if (
           working.lastResolvedHourKey === cycleKey &&
@@ -562,6 +600,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           data = await fetchHourly(cycleKey, th, working.settings, {
             tiltActive: isTiltActive(working.tiltGuardUntil),
             history: working.history,
+            lessons: working.lessons,
           });
         }
 

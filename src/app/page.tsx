@@ -192,6 +192,14 @@ export default function HomePage() {
           <p className="mt-1 text-[12px] text-[var(--muted)]">
             {formatBetWhen(last.hourKey, last.at, state.settings.timezone)}
           </p>
+          {last.outcome === "loss" && last.plainFix ? (
+            <p
+              className="mt-2 text-[13px] leading-snug"
+              style={{ color: "var(--ios-blue)" }}
+            >
+              {last.plainFix}
+            </p>
+          ) : null}
         </Link>
       )}
 

@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { LessonCard } from "@/components/LessonCard";
 import {
   SCORE_WEIGHTS,
   TILT_GUARD_HOURS,
+  activeLessons,
   computeMotorMetrics,
   evaluateQuality,
   historyToCsv,
@@ -60,6 +62,7 @@ export default function MotorPage() {
       ? 1 / pick.bookOdds
       : null;
   const metrics = computeMotorMetrics(state.history, 200);
+  const lessonsLive = activeLessons(state.lessons);
   const why = (pick?.layers ?? [])
     .filter((l) => mode === "lore" || (l.key !== "numerology" && l.key !== "stars"))
     .slice(0, 3);
@@ -86,9 +89,8 @@ export default function MotorPage() {
         <p className="section-label !normal-case !tracking-normal">Lab</p>
         <h1 className="large-title">Motor</h1>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Ranking EV book-only (edge ≥2pp, odds 1.30–1.90). Sin book o sin
-          edge → SKIP. Lore ≤5% y fuera del rank. Debug: MOTOR_GUARANTEE=1
-          fuerza pick shadow.
+          Ranking EV book-only + Autopsia 1L: cada loss deja una lección
+          tangible (cool/ban/gates). Sin book → SKIP. Debug: MOTOR_GUARANTEE=1.
         </p>
       </header>
 
@@ -259,7 +261,34 @@ export default function MotorPage() {
             Base {state.settings.scoreThreshold} · el juez final es EV + filtros.
           </p>
         )}
+        {lessonsLive.length > 0 ? (
+          <p className="mt-2 text-[13px]" style={{ color: "var(--ios-orange)" }}>
+            {lessonsLive.length} lección{lessonsLive.length === 1 ? "" : "es"}{" "}
+            activa{lessonsLive.length === 1 ? "" : "s"} de Autopsia 1L.
+          </p>
+        ) : null}
       </div>
+
+      {state.lessons.length > 0 ? (
+        <div className="space-y-3">
+          <p className="section-label">Lecciones (Autopsia 1L)</p>
+          {state.lessons.slice(0, 8).map((l) => (
+            <div key={l.id} className="ios-card p-4">
+              <p className="text-[13px] text-[var(--muted)]">
+                {l.matchLabel ?? "Loss"} · {l.action} → {l.target}
+              </p>
+              <LessonCard
+                plainWhy={l.plainWhy}
+                plainFix={l.plainFix}
+                cause={l.cause}
+                homeScore={l.homeScore}
+                awayScore={l.awayScore}
+                expiresAt={l.expiresAt}
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="space-y-3">
         {visibleLayers.map((l) => (

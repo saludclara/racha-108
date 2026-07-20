@@ -1,4 +1,5 @@
-import type { DataProvider, HistoryEntry } from "./types";
+import { ALLOWED_MARKETS, MARKET_LABELS } from "./markets";
+import type { DataProvider, HistoryEntry, MarketType } from "./types";
 
 export type BucketStats = {
   key: string;
@@ -11,11 +12,50 @@ export type BucketStats = {
 export type SoftBlacklist = {
   leagues: Set<string>;
   providers: Set<DataProvider>;
+  /** Hard exclude — e.g. 2 losses in this market in the recent window. */
+  markets: Set<MarketType>;
+  /** Soft demote in rank (weak hit-rate, not yet banned). */
+  coolMarkets: Set<MarketType>;
 };
 
+const LABEL_TO_MARKET = new Map(
+  Object.entries(MARKET_LABELS).map(([k, v]) => [v, k as MarketType]),
+);
+
+/** Resolve market key from history (new `market` field or legacy label). */
+export function marketFromEntry(h: HistoryEntry): MarketType | undefined {
+  if (h.market && (ALLOWED_MARKETS as string[]).includes(h.market)) {
+    return h.market;
+  }
+  if (h.marketLabel) {
+    return LABEL_TO_MARKET.get(h.marketLabel);
+  }
+  return undefined;
+}
+
+/** Trailing W/L losses at the head of history (skips/pushes/pending ignored). */
+export function consecutiveLossCount(history: HistoryEntry[]): number {
+  let n = 0;
+  for (const h of history) {
+    if (
+      h.outcome === "skip" ||
+      h.outcome === "pending" ||
+      h.outcome === "push"
+    ) {
+      continue;
+    }
+    if (h.outcome === "loss") {
+      n += 1;
+      continue;
+    }
+    break;
+  }
+  return n;
+}
+
 /**
- * Soft blacklist: leagues/providers with enough settled bets and weak hit-rate.
- * Requires minN so early noise does not nuke the board.
+ * Soft blacklist: leagues/providers/markets with weak hit-rate,
+ * plus early market ban after 2 recent losses in the same market.
  */
 export function softBlacklists(
   history: HistoryEntry[],
@@ -27,6 +67,9 @@ export function softBlacklists(
   const m = computeMotorMetrics(history, window);
   const leagues = new Set<string>();
   const providers = new Set<DataProvider>();
+  const markets = new Set<MarketType>();
+  const coolMarkets = new Set<MarketType>();
+
   for (const b of m.byLeague) {
     if (b.n >= minN && b.hitRate != null && b.hitRate < maxHitRate) {
       leagues.add(b.key);
@@ -45,7 +88,50 @@ export function softBlacklists(
       providers.add(b.key);
     }
   }
-  return { leagues, providers };
+
+  // Structural weak markets (enough sample)
+  for (const b of m.byMarket) {
+    const mk = (ALLOWED_MARKETS as string[]).includes(b.key)
+      ? (b.key as MarketType)
+      : LABEL_TO_MARKET.get(b.key);
+    if (!mk) continue;
+    if (b.n >= 4 && b.hitRate != null && b.hitRate < 0.4) {
+      coolMarkets.add(mk);
+    }
+    if (b.n >= minN && b.hitRate != null && b.hitRate < maxHitRate) {
+      markets.add(mk);
+    }
+  }
+
+  // Early signal from the two losses: ≥2 L in same market among last 12 decided
+  const decided = history
+    .filter((h) => h.outcome === "win" || h.outcome === "loss")
+    .slice(0, 12);
+  const lossCount = new Map<MarketType, number>();
+  for (const h of decided) {
+    if (h.outcome !== "loss") continue;
+    const mk = marketFromEntry(h);
+    if (!mk) continue;
+    lossCount.set(mk, (lossCount.get(mk) ?? 0) + 1);
+  }
+  for (const [mk, n] of lossCount) {
+    if (n >= 2) markets.add(mk);
+    else if (n >= 1) coolMarkets.add(mk);
+  }
+
+  // If last two decided are both losses (any market) → cool those markets
+  const lastTwo = decided.slice(0, 2);
+  if (
+    lastTwo.length === 2 &&
+    lastTwo.every((h) => h.outcome === "loss")
+  ) {
+    for (const h of lastTwo) {
+      const mk = marketFromEntry(h);
+      if (mk) coolMarkets.add(mk);
+    }
+  }
+
+  return { leagues, providers, markets, coolMarkets };
 }
 
 export type MotorMetrics = {
@@ -148,7 +234,10 @@ export function computeMotorMetrics(
     avgEdge: mean(edges),
     avgModelProb: mean(probs),
     brier: brierN ? brierSum / brierN : null,
-    byMarket: bucket(decided, (h) => h.marketLabel),
+    byMarket: bucket(
+      decided,
+      (h) => marketFromEntry(h) ?? h.marketLabel,
+    ),
     byLeague: bucket(decided, (h) => h.league),
     byProvider: bucket(decided, (h) => h.provider),
   };
@@ -172,6 +261,11 @@ export function historyToCsv(history: HistoryEntry[]): string {
     "stake",
     "profit",
     "shadowWouldSkip",
+    "homeScore",
+    "awayScore",
+    "lessonCause",
+    "plainWhy",
+    "plainFix",
   ];
   const esc = (v: unknown) => {
     if (v == null) return "";
@@ -198,6 +292,11 @@ export function historyToCsv(history: HistoryEntry[]): string {
         h.stake,
         h.profit,
         h.shadowWouldSkip,
+        h.homeScore,
+        h.awayScore,
+        h.lessonCause,
+        h.plainWhy,
+        h.plainFix,
       ]
         .map(esc)
         .join(","),

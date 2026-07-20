@@ -162,6 +162,8 @@ export async function processRunCycle(
     next.settings,
     next.tiltGuardUntil,
     now,
+    next.history,
+    next.lessons,
   );
   const data = buildHourlyPickFromMatches(
     cycleKey,
@@ -172,6 +174,7 @@ export async function processRunCycle(
     {
       tiltActive: isTiltActive(next.tiltGuardUntil, now),
       history: next.history,
+      lessons: next.lessons,
     },
   );
   next = applyHourlyResult(next, cycleKey, data, now);

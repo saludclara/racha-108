@@ -10,12 +10,23 @@ import {
   computeStarsScore,
 } from "./numerology";
 import { marketModelProb } from "./model";
-import { softBlacklists, type SoftBlacklist } from "./metrics";
+import {
+  gatesWithMarketLessons,
+  lessonEffects,
+  mergeLessonEffects,
+  type LessonEffects,
+} from "./autopsy";
+import {
+  consecutiveLossCount,
+  softBlacklists,
+  type SoftBlacklist,
+} from "./metrics";
 import { isDeepLive } from "./eligibility";
 import { isMarketLockedByScores } from "./settle";
 import type {
   HistoryEntry,
   LayerScore,
+  Lesson,
   MarketType,
   MatchCandidate,
   OddsSource,
@@ -56,13 +67,17 @@ function oddsSourceFor(
 }
 
 /** Score without lore — used for threshold / rank tie-breaks. */
-function grindScore(layers: LayerScore[]): number {
+function grindScore(
+  layers: LayerScore[],
+  demoted?: Set<LayerScore["key"]>,
+): number {
   let sum = 0;
   let w = 0;
   for (const l of layers) {
     if (l.key === "numerology" || l.key === "stars") continue;
-    sum += l.score * l.weight;
-    w += l.weight;
+    const weight = demoted?.has(l.key) ? l.weight * 0.5 : l.weight;
+    sum += l.score * weight;
+    w += weight;
   }
   if (w <= 0) return 0;
   return clamp(sum / w);
@@ -204,18 +219,28 @@ type QualityGates = {
   maxModelProb: number;
 };
 
-/** Tilt raises EV gates (not only the UI score threshold). */
-function qualityGatesFor(tiltActive: boolean): QualityGates {
-  if (!tiltActive) {
-    return {
-      minModelProb: MIN_MODEL_PROB,
-      minEdgeBook: MIN_EDGE_BOOK,
-      maxModelProb: MAX_MODEL_PROB,
-    };
+/**
+ * Tilt + consecutive losses raise EV gates.
+ * Per-market Autopsia bumps applied later via gatesWithMarketLessons.
+ * After 2 losses: edge ≥4.5pp and higher modelProb floor.
+ */
+function qualityGatesFor(
+  tiltActive: boolean,
+  lossStreak = 0,
+): QualityGates {
+  let minModelProb = MIN_MODEL_PROB;
+  let minEdgeBook = MIN_EDGE_BOOK;
+  if (tiltActive) {
+    minModelProb = Math.min(0.9, MIN_MODEL_PROB + 0.04);
+    minEdgeBook = MIN_EDGE_BOOK + 0.01;
+  }
+  if (lossStreak >= 2) {
+    minModelProb = Math.min(0.9, Math.max(minModelProb, MIN_MODEL_PROB + 0.06));
+    minEdgeBook = Math.max(minEdgeBook, MIN_EDGE_BOOK + 0.025);
   }
   return {
-    minModelProb: Math.min(0.9, MIN_MODEL_PROB + 0.04),
-    minEdgeBook: MIN_EDGE_BOOK + 0.01,
+    minModelProb,
+    minEdgeBook,
     maxModelProb: MAX_MODEL_PROB,
   };
 }
@@ -358,8 +383,12 @@ const marketPriority: Partial<Record<MarketType, number>> = {
   ah_home_m05: 0,
 };
 
-/** Primary rank: book → edge → grind (no lore) → market. Never raw modelProb. */
-function rankPicks(list: ScoredPick[]): ScoredPick[] {
+/** Primary rank: book → edge → grind → market (cool markets demoted). */
+function rankPicks(
+  list: ScoredPick[],
+  coolMarkets?: Set<MarketType>,
+): ScoredPick[] {
+  const cool = coolMarkets ?? new Set<MarketType>();
   return [...list].sort((a, b) => {
     const aBook = a.oddsSource === "book" ? 1 : 0;
     const bBook = b.oddsSource === "book" ? 1 : 0;
@@ -368,7 +397,9 @@ function rankPicks(list: ScoredPick[]): ScoredPick[] {
     const ag = grindScore(a.layers);
     const bg = grindScore(b.layers);
     if (bg !== ag) return bg - ag;
-    return (marketPriority[b.market] ?? 0) - (marketPriority[a.market] ?? 0);
+    const ap = (marketPriority[a.market] ?? 0) - (cool.has(a.market) ? 8 : 0);
+    const bp = (marketPriority[b.market] ?? 0) - (cool.has(b.market) ? 8 : 0);
+    return bp - ap;
   });
 }
 
@@ -384,19 +415,34 @@ function filterBlacklisted(
   });
 }
 
+/** Hard Autopsia league ban — never soft-falls back to banned leagues. */
+function filterBannedLeagues(
+  matches: MatchCandidate[],
+  bannedLeagues: Set<string>,
+): MatchCandidate[] {
+  if (!bannedLeagues.size) return matches;
+  return matches.filter((m) => !m.league || !bannedLeagues.has(m.league));
+}
+
 function collectCandidates(
   matches: MatchCandidate[],
   hourKey: string,
   now: Date,
-  gates: QualityGates,
+  baseGates: QualityGates,
   guarantee: boolean,
+  bannedMarkets?: Set<MarketType>,
+  fx?: LessonEffects,
 ): { quality: ScoredPick[]; soft: ScoredPick[]; forced: ScoredPick[] } {
   const quality: ScoredPick[] = [];
   const soft: ScoredPick[] = [];
   const forced: ScoredPick[] = [];
+  const banned = bannedMarkets ?? new Set<MarketType>();
+  const effects = fx ?? lessonEffects([]);
 
   for (const match of matches) {
     for (const market of ALLOWED_MARKETS) {
+      if (banned.has(market)) continue;
+      const gates = gatesWithMarketLessons(baseGates, market, effects);
       const strict = buildScoredPick(match, market, hourKey, now, {
         strict: true,
         gates,
@@ -433,13 +479,17 @@ function selectFromBuckets(
   forced: ScoredPick[],
   threshold: number,
   guarantee: boolean,
+  coolMarkets?: Set<MarketType>,
+  demoted?: Set<LayerScore["key"]>,
 ): ScoredPick | null {
   // Product path: must clear grind threshold (no p≥0.88 / quality fallback).
-  const primary = quality.filter((p) => grindScore(p.layers) >= threshold);
-  if (primary.length) return rankPicks(primary)[0];
+  const primary = quality.filter(
+    (p) => grindScore(p.layers, demoted) >= threshold,
+  );
+  if (primary.length) return rankPicks(primary, coolMarkets)[0];
   if (!guarantee) return null;
-  if (soft.length) return rankPicks(soft)[0];
-  if (forced.length) return rankPicks(forced)[0];
+  if (soft.length) return rankPicks(soft, coolMarkets)[0];
+  if (forced.length) return rankPicks(forced, coolMarkets)[0];
   return null;
 }
 
@@ -451,6 +501,8 @@ export type PickBestOptions = {
   guarantee?: boolean;
   tiltActive?: boolean;
   history?: HistoryEntry[];
+  /** Active Autopsia lessons (cool/ban/gate bumps). */
+  lessons?: Lesson[];
 };
 
 /** Concrete SKIP codes for UI / cron messages. */
@@ -568,26 +620,58 @@ export function choosePickForHour(
   }
 
   const guarantee = resolveGuarantee(opts);
-  const gates = qualityGatesFor(Boolean(opts.tiltActive));
-  const bl =
-    opts.history && opts.history.length
-      ? softBlacklists(opts.history)
-      : null;
-  const filtered = filterBlacklisted(matches, bl);
-  // Soft: if blacklist wipes the board, keep the settleable pool
-  const pool = filtered.length ? filtered : matches;
+  const history = opts.history ?? [];
+  const lossStreak = consecutiveLossCount(history);
+  const fx = lessonEffects(opts.lessons, now);
+  const gates = qualityGatesFor(Boolean(opts.tiltActive), lossStreak);
+  let bl: SoftBlacklist | null = history.length
+    ? softBlacklists(history)
+    : null;
+  if (fx.coolMarkets.size || fx.bannedMarkets.size) {
+    bl = bl ?? {
+      leagues: new Set(),
+      providers: new Set(),
+      markets: new Set(),
+      coolMarkets: new Set(),
+    };
+    mergeLessonEffects(bl, fx);
+  }
+  // Soft history blacklist may fall back; Autopsia league bans never do.
+  const softFiltered = filterBlacklisted(matches, bl);
+  const afterSoft = softFiltered.length ? softFiltered : matches;
+  const pool = filterBannedLeagues(afterSoft, fx.bannedLeagues);
   if (!pool.length) {
     return { pick: null, skipReason: "empty_pool" };
   }
 
+  const bannedMarkets = new Set<MarketType>([
+    ...(bl?.markets ?? []),
+    ...fx.bannedMarkets,
+  ]);
+  const coolMarkets = new Set<MarketType>([
+    ...(bl?.coolMarkets ?? []),
+    ...fx.coolMarkets,
+  ]);
+  const demoted = fx.demotedLayers;
+
   // Pure EV candidate (what we would do with guarantee off)
-  const evBuckets = collectCandidates(pool, hourKey, now, gates, false);
+  const evBuckets = collectCandidates(
+    pool,
+    hourKey,
+    now,
+    gates,
+    false,
+    bannedMarkets,
+    fx,
+  );
   const evPick = selectFromBuckets(
     evBuckets.quality,
     evBuckets.soft,
     evBuckets.forced,
     threshold,
     false,
+    coolMarkets,
+    demoted,
   );
 
   if (!guarantee) {
@@ -598,18 +682,42 @@ export function choosePickForHour(
       };
     }
     evPick.shadowWouldSkip = false;
-    evPick.shadowNote = "EV mode · pick taken";
+    const coolBit =
+      coolMarkets.has(evPick.market) ? " · mercado en cool" : "";
+    const lessonBit =
+      fx.coolMarkets.size ||
+      fx.bannedMarkets.size ||
+      fx.bannedLeagues.size ||
+      fx.edgeBumpByMarket.size ||
+      fx.modelProbBumpByMarket.size ||
+      fx.thresholdBump ||
+      fx.demotedLayers.size
+        ? " · autopsia"
+        : "";
+    const banNote =
+      lossStreak >= 2 ? ` · post ${lossStreak}L gates` : "";
+    evPick.shadowNote = `EV mode · pick taken${banNote}${coolBit}${lessonBit}`;
     return { pick: evPick, skipReason: null };
   }
 
   // Product pick may fall back to soft/forced
-  const prodBuckets = collectCandidates(pool, hourKey, now, gates, true);
+  const prodBuckets = collectCandidates(
+    pool,
+    hourKey,
+    now,
+    gates,
+    true,
+    bannedMarkets,
+    fx,
+  );
   const pick = selectFromBuckets(
     prodBuckets.quality,
     prodBuckets.soft,
     prodBuckets.forced,
     threshold,
     true,
+    coolMarkets,
+    demoted,
   );
   if (!pick) {
     return {
